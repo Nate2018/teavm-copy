@@ -28,10 +28,8 @@ import java.nio.ReadOnlyBufferException;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.teavm.junit.TeaVMTestRunner;
-import org.teavm.junit.WholeClassCompilation;
 
 @RunWith(TeaVMTestRunner.class)
-@WholeClassCompilation
 public class CharBufferTest {
     @Test
     public void allocates() {
@@ -431,5 +429,12 @@ public class CharBufferTest {
         CharBuffer buffer = CharBuffer.allocate(100);
         buffer.put("TeaVM");
         assertThat(buffer.flip().toString(), is("TeaVM"));
+    }
+
+    @Test
+    public void putGetEmptyArray() {
+        CharBuffer cb = CharBuffer.allocate(0);
+        cb.put("");
+        cb.get(new char[0]);
     }
 }

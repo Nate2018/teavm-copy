@@ -17,6 +17,7 @@ package org.teavm.classlib.java.nio;
 
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.CoreMatchers.sameInstance;
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertThat;
 import static org.junit.Assert.fail;
 import java.nio.BufferOverflowException;
@@ -27,10 +28,8 @@ import java.nio.ReadOnlyBufferException;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.teavm.junit.TeaVMTestRunner;
-import org.teavm.junit.WholeClassCompilation;
 
 @RunWith(TeaVMTestRunner.class)
-@WholeClassCompilation
 public class IntBufferTest {
     @Test
     public void allocatesSimple() {
@@ -130,6 +129,19 @@ public class IntBufferTest {
         assertThat(buffer.get(15), is(24));
         buffer.put(16, 25);
         assertThat(slice.get(1), is(25));
+    }
+
+
+    @Test
+    public void sliceOfSlice() {
+        var buffer = IntBuffer.allocate(100);
+        buffer.put(new int[10]);
+        var slice1 = buffer.slice();
+        slice1.put(new int[15]);
+        var slice2 = slice1.slice();
+
+        assertEquals(25, slice2.arrayOffset());
+        assertEquals(75, slice2.capacity());
     }
 
     @Test
@@ -371,5 +383,12 @@ public class IntBufferTest {
         buffer.position(2);
         buffer.reset();
         assertThat(buffer.position(), is(1));
+    }
+
+    @Test
+    public void putEmptyArray() {
+        IntBuffer ib = IntBuffer.allocate(0);
+        ib.put(new int[0]);
+        ib.get(new int[0]);
     }
 }

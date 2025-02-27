@@ -15,6 +15,7 @@
  */
 package org.teavm.classlib.java.nio;
 
+import java.util.Objects;
 import org.teavm.classlib.java.lang.TComparable;
 
 public abstract class TByteBuffer extends TBuffer implements TComparable<TByteBuffer> {
@@ -45,6 +46,7 @@ public abstract class TByteBuffer extends TBuffer implements TComparable<TByteBu
     }
 
     public static TByteBuffer wrap(byte[] array, int offset, int length) {
+        Objects.checkFromIndexSize(offset, length, array.length);
         return new TByteBufferImpl(0, array.length, array, offset, offset + length, false, false);
     }
 
@@ -67,7 +69,7 @@ public abstract class TByteBuffer extends TBuffer implements TComparable<TByteBu
     public abstract TByteBuffer put(int index, byte b);
 
     public TByteBuffer get(byte[] dst, int offset, int length) {
-        if (offset < 0 || offset >= dst.length) {
+        if (offset < 0 || offset > dst.length) {
             throw new IndexOutOfBoundsException("Offset " + offset + " is outside of range [0;" + dst.length + ")");
         }
         if (offset + length > dst.length) {
@@ -106,7 +108,7 @@ public abstract class TByteBuffer extends TBuffer implements TComparable<TByteBu
         if (remaining() < length) {
             throw new TBufferOverflowException();
         }
-        if (offset < 0 || offset >= src.length) {
+        if (offset < 0 || offset > src.length) {
             throw new IndexOutOfBoundsException("Offset " + offset + " is outside of range [0;" + src.length + ")");
         }
         if (offset + length > src.length) {
@@ -253,7 +255,23 @@ public abstract class TByteBuffer extends TBuffer implements TComparable<TByteBu
 
     public abstract TLongBuffer asLongBuffer();
 
+    public abstract float getFloat();
+
+    public abstract TByteBuffer putFloat(float value);
+
+    public abstract float getFloat(int index);
+
+    public abstract TByteBuffer putFloat(int index, float value);
+
     public abstract TFloatBuffer asFloatBuffer();
+
+    public abstract double getDouble();
+
+    public abstract TByteBuffer putDouble(double value);
+
+    public abstract double getDouble(int index);
+
+    public abstract TByteBuffer putDouble(int index, double value);
 
     public abstract TDoubleBuffer asDoubleBuffer();
 

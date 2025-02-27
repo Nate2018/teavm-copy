@@ -37,6 +37,7 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.IOUtils;
+import org.teavm.tooling.TeaVMSourceFilePolicy;
 import org.teavm.tooling.TeaVMTool;
 import org.teavm.tooling.TeaVMToolException;
 import org.teavm.tooling.sources.DirectorySourceFileProvider;
@@ -50,7 +51,6 @@ public class BuildDaemon extends UnicastRemoteObject implements RemoteBuildServi
     private static final int MAX_PORT = 1 << 16;
     private static final String DAEMON_MESSAGE_PREFIX = "TeaVM daemon port: ";
     private static final String INCREMENTAL_PROPERTY = "teavm.daemon.incremental";
-    private static final String DEBUG_PORT_PROPERTY = "teavm.daemon.debug.port";
     private boolean incremental;
     private int port;
     private Registry registry;
@@ -148,7 +148,9 @@ public class BuildDaemon extends UnicastRemoteObject implements RemoteBuildServi
 
         tool.setSourceMapsFileGenerated(request.sourceMapsFileGenerated);
         tool.setDebugInformationGenerated(request.debugInformationGenerated);
-        tool.setSourceFilesCopied(request.sourceFilesCopied);
+        if (request.sourceFilePolicy != null) {
+            tool.setSourceFilePolicy(TeaVMSourceFilePolicy.valueOf(request.sourceFilePolicy));
+        }
         if (request.properties != null) {
             tool.getProperties().putAll(request.properties);
         }
@@ -156,14 +158,17 @@ public class BuildDaemon extends UnicastRemoteObject implements RemoteBuildServi
         tool.setOptimizationLevel(request.optimizationLevel);
         tool.setFastDependencyAnalysis(request.fastDependencyAnalysis);
         tool.setObfuscated(request.obfuscated);
+        tool.setJsModuleType(request.jsModuleType);
         tool.setStrict(request.strict);
-        tool.setMaxTopLevelNames(request.maxTopLevelNames);
         tool.setWasmVersion(request.wasmVersion);
+        tool.setWasmExceptionsUsed(request.wasmExceptionsUsed);
+        tool.setWasmDebugInfoLocation(request.wasmDebugInfoLocation);
+        tool.setWasmDebugInfoLevel(request.wasmDebugInfoLevel);
         tool.setMinHeapSize(request.minHeapSize);
         tool.setMaxHeapSize(request.maxHeapSize);
-        tool.setLongjmpSupported(request.longjmpSupported);
         tool.setHeapDump(request.heapDump);
         tool.setShortFileNames(request.shortFileNames);
+        tool.setAssertionsRemoved(request.assertionsRemoved);
 
         for (String sourceDirectory : request.sourceDirectories) {
             tool.addSourceFileProvider(new DirectorySourceFileProvider(new File(sourceDirectory)));
@@ -184,11 +189,6 @@ public class BuildDaemon extends UnicastRemoteObject implements RemoteBuildServi
             response.callGraph = tool.getDependencyInfo().getCallGraph();
             response.problems.addAll(tool.getProblemProvider().getProblems());
             response.severeProblems.addAll(tool.getProblemProvider().getSevereProblems());
-            response.classes.addAll(tool.getClasses());
-            response.usedResources.addAll(tool.getUsedResources());
-            response.generatedFiles.addAll(tool.getGeneratedFiles().stream()
-                    .map(File::getAbsolutePath)
-                    .collect(Collectors.toSet()));
         }
 
         return response;
@@ -268,6 +268,11 @@ public class BuildDaemon extends UnicastRemoteObject implements RemoteBuildServi
 
     public static DaemonInfo start(boolean incremental, int daemonMemory, DaemonLog log,
             String... classPathEntries) throws IOException {
+        return start(0, incremental, daemonMemory, log, classPathEntries);
+    }
+
+    public static DaemonInfo start(int debugPort, boolean incremental, int daemonMemory, DaemonLog log,
+            String... classPathEntries) throws IOException {
         String javaHome = System.getProperty("java.home");
         String javaCommand = javaHome + "/bin/java";
         String classPath = String.join(File.pathSeparator, classPathEntries);
@@ -277,10 +282,10 @@ public class BuildDaemon extends UnicastRemoteObject implements RemoteBuildServi
                 "-D" + INCREMENTAL_PROPERTY + "=" + incremental,
                 "-Xmx" + daemonMemory + "m"));
 
-        String debugPort = System.getProperty(DEBUG_PORT_PROPERTY);
-        if (debugPort != null) {
+        if (debugPort != 0) {
             arguments.add("-agentlib:jdwp=transport=dt_socket,quiet=y,server=y,address=" + debugPort + ",suspend=y");
         }
+        arguments.add("-XX:+HeapDumpOnOutOfMemoryError");
 
         arguments.add(BuildDaemon.class.getName());
 

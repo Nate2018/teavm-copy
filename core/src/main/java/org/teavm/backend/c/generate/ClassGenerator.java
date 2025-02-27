@@ -73,6 +73,7 @@ import org.teavm.model.instructions.IsInstanceInstruction;
 import org.teavm.model.instructions.StringConstantInstruction;
 import org.teavm.model.lowlevel.CallSiteDescriptor;
 import org.teavm.model.lowlevel.Characteristics;
+import org.teavm.model.util.ReflectionUtil;
 import org.teavm.runtime.CallSite;
 import org.teavm.runtime.RuntimeArray;
 import org.teavm.runtime.RuntimeClass;
@@ -198,11 +199,7 @@ public class ClassGenerator {
 
         @Override
         public void visit(ConstructMultiArrayInstruction insn) {
-            ValueType type = insn.getItemType();
-            for (int i = 0; i < insn.getDimensions().size(); ++i) {
-                type = ValueType.arrayOf(type);
-            }
-            addType(type);
+            addType(insn.getItemType());
         }
     };
 
@@ -262,7 +259,7 @@ public class ClassGenerator {
         ClassGenerationContext classContext = new ClassGenerationContext(context, includes, prologueWriter,
                 initWriter, currentClassName);
         codeGenerator = new CodeGenerator(classContext, codeWriter, includes);
-        if (context.isLongjmp() && !context.isIncremental()) {
+        if (!context.isIncremental()) {
             codeGenerator.setCallSites(callSites);
         }
     }
@@ -338,18 +335,15 @@ public class ClassGenerator {
             }
 
             List<CallSiteDescriptor> callSites = null;
-            if (context.isLongjmp()) {
-                if (context.isIncremental()) {
-                    callSites = new ArrayList<>();
-                    codeGenerator.setCallSites(callSites);
-                }
+            if (context.isIncremental()) {
+                callSites = new ArrayList<>();
+                codeGenerator.setCallSites(callSites);
             }
 
             codeGenerator.generateMethod(methodNode);
 
             if (context.isIncremental()) {
-                generateCallSites(method.getReference(),
-                        context.isLongjmp() ? callSites : CallSiteDescriptor.extract(method.getProgram()));
+                generateCallSites(method.getReference(), callSites);
                 codeWriter.println("#undef TEAVM_ALLOC_STACK");
             }
         }
@@ -747,11 +741,23 @@ public class ClassGenerator {
                 sizeExpr = "0";
             }
             if (cls != null) {
-                if (cls.hasModifier(ElementModifier.ENUM)) {
-                    flags |= RuntimeClass.ENUM;
+                if (cls.hasModifier(ElementModifier.ABSTRACT)) {
+                    flags |= RuntimeClass.ABSTRACT;
+                }
+                if (cls.hasModifier(ElementModifier.INTERFACE)) {
+                    flags |= RuntimeClass.INTERFACE;
+                }
+                if (cls.hasModifier(ElementModifier.FINAL)) {
+                    flags |= RuntimeClass.FINAL;
+                }
+                if (cls.hasModifier(ElementModifier.ANNOTATION)) {
+                    flags |= RuntimeClass.ANNOTATION;
                 }
                 if (cls.hasModifier(ElementModifier.SYNTHETIC)) {
                     flags |= RuntimeClass.SYNTHETIC;
+                }
+                if (cls.hasModifier(ElementModifier.ENUM)) {
+                    flags |= RuntimeClass.ENUM;
                 }
             }
             List<TagRegistry.Range> ranges = tagRegistry != null ? tagRegistry.getRanges(className) : null;
@@ -1135,6 +1141,7 @@ public class ClassGenerator {
             String className = ((ValueType.Object) type).getClassName();
             return !context.getCharacteristics().isStructure(className)
                     && !context.getCharacteristics().isFunction(className)
+                    && !context.getCharacteristics().isResource(className)
                     && !className.equals(Address.class.getName());
         } else {
             return type instanceof ValueType.Array;
@@ -1276,7 +1283,7 @@ public class ClassGenerator {
         codeWriter.outdent().println("}");
 
         GeneratorContextImpl generatorContext = new GeneratorContextImpl(codeGenerator.getClassContext(),
-                bodyWriter, writerBefore, codeWriter, includes, callSites, context.isLongjmp());
+                bodyWriter, writerBefore, codeWriter, includes, callSites);
         generator.generate(generatorContext, methodRef);
         try {
             generatorContext.flush();
@@ -1289,26 +1296,7 @@ public class ClassGenerator {
 
     public String nameOfType(ValueType type) {
         if (type instanceof ValueType.Primitive) {
-            switch (((ValueType.Primitive) type).getKind()) {
-                case BOOLEAN:
-                    return "boolean";
-                case BYTE:
-                    return "byte";
-                case SHORT:
-                    return "short";
-                case CHARACTER:
-                    return "char";
-                case INTEGER:
-                    return "int";
-                case LONG:
-                    return "long";
-                case FLOAT:
-                    return "float";
-                case DOUBLE:
-                    return "double";
-                default:
-                    throw new AssertionError();
-            }
+            return ReflectionUtil.typeName(((ValueType.Primitive) type).getKind());
         } else if (type instanceof ValueType.Array) {
             if (isArrayOfPrimitives(type)) {
                 return type.toString().replace('/', '.');

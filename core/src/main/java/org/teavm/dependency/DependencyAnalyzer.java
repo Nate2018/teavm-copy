@@ -33,7 +33,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Queue;
 import java.util.Set;
-import java.util.function.Function;
 import org.objectweb.asm.tree.ClassNode;
 import org.teavm.cache.IncrementalDependencyProvider;
 import org.teavm.cache.IncrementalDependencyRegistration;
@@ -43,7 +42,6 @@ import org.teavm.common.ServiceRepository;
 import org.teavm.diagnostics.Diagnostics;
 import org.teavm.interop.PlatformMarker;
 import org.teavm.model.AnnotationReader;
-import org.teavm.model.BasicBlock;
 import org.teavm.model.CallLocation;
 import org.teavm.model.ClassHierarchy;
 import org.teavm.model.ClassHolder;
@@ -51,11 +49,8 @@ import org.teavm.model.ClassHolderTransformer;
 import org.teavm.model.ClassReader;
 import org.teavm.model.ClassReaderSource;
 import org.teavm.model.ElementModifier;
-import org.teavm.model.FieldHolder;
 import org.teavm.model.FieldReader;
 import org.teavm.model.FieldReference;
-import org.teavm.model.Instruction;
-import org.teavm.model.InvokeDynamicInstruction;
 import org.teavm.model.MethodDescriptor;
 import org.teavm.model.MethodHolder;
 import org.teavm.model.MethodReader;
@@ -63,12 +58,7 @@ import org.teavm.model.MethodReference;
 import org.teavm.model.Program;
 import org.teavm.model.ReferenceCache;
 import org.teavm.model.ValueType;
-import org.teavm.model.emit.ProgramEmitter;
-import org.teavm.model.emit.ValueEmitter;
-import org.teavm.model.instructions.AssignInstruction;
-import org.teavm.model.instructions.NullConstantInstruction;
 import org.teavm.model.optimization.UnreachableBasicBlockEliminator;
-import org.teavm.model.util.BasicBlockSplitter;
 import org.teavm.model.util.ModelUtils;
 import org.teavm.model.util.ProgramUtils;
 import org.teavm.parsing.Parser;
@@ -81,12 +71,12 @@ public abstract class DependencyAnalyzer implements DependencyInfo {
             || shouldLog;
     static final boolean dependencyReport = System.getProperty("org.teavm.dependencyReport", "false").equals("true");
     private int classNameSuffix;
+    private ClassReaderSource unprocessedClassSource;
     private DependencyClassSource classSource;
     ClassReaderSource agentClassSource;
     private ClassLoader classLoader;
     private Map<String, Map<MethodDescriptor, Optional<MethodHolder>>> methodReaderCache = new HashMap<>(1000, 0.5f);
     private Map<MethodReference, MethodDependency> implementationCache = new HashMap<>();
-    private Function<FieldReference, FieldHolder> fieldReaderCache;
     private Map<String, Map<MethodDescriptor, MethodDependency>> methodCache = new HashMap<>();
     private Set<MethodReference> reachedMethods = new LinkedHashSet<>();
     private Set<MethodReference> readonlyReachedMethods = Collections.unmodifiableSet(reachedMethods);
@@ -104,7 +94,6 @@ public abstract class DependencyAnalyzer implements DependencyInfo {
     private Diagnostics diagnostics;
     DefaultCallGraph callGraph = new DefaultCallGraph();
     private DependencyAgent agent;
-    Map<MethodReference, BootstrapMethodSubstitutor> bootstrapMethodSubstitutors = new HashMap<>();
     Map<MethodReference, DependencyPlugin> dependencyPlugins = new HashMap<>();
     private boolean completing;
     private Map<String, DependencyTypeFilter> superClassFilters = new HashMap<>();
@@ -117,17 +106,18 @@ public abstract class DependencyAnalyzer implements DependencyInfo {
     DependencyType classType;
 
     DependencyAnalyzer(ClassReaderSource classSource, ClassLoader classLoader, ServiceRepository services,
-            Diagnostics diagnostics, ReferenceCache referenceCache) {
+            Diagnostics diagnostics, ReferenceCache referenceCache, String[] platformTags) {
+        this.unprocessedClassSource = classSource;
         this.diagnostics = diagnostics;
         this.referenceCache = referenceCache;
-        this.classSource = new DependencyClassSource(classSource, diagnostics, incrementalCache);
+        agent = new DependencyAgent(this);
+        this.classSource = new DependencyClassSource(agent, classSource, diagnostics, incrementalCache, platformTags);
         agentClassSource = this.classSource;
         classHierarchy = new ClassHierarchy(this.classSource);
         this.classLoader = classLoader;
         this.services = services;
-        fieldReaderCache = new CachedFunction<>(preimage -> this.classSource.resolveMutable(preimage));
         fieldCache = new CachedFunction<>(preimage -> {
-            FieldReader field = fieldReaderCache.apply(preimage);
+            var field = this.classSource.getReferenceResolver().resolve(preimage);
             if (field != null && !field.getReference().equals(preimage)) {
                 return fieldCache.apply(field.getReference());
             }
@@ -140,8 +130,12 @@ public abstract class DependencyAnalyzer implements DependencyInfo {
 
         classCache = new CachedFunction<>(this::createClassDependency);
 
-        agent = new DependencyAgent(this);
         classType = getType("java.lang.Class");
+    }
+
+    public void setEntryPoint(String entryPoint) {
+        classSource.setEntryPoint(entryPoint);
+        agent.setEntryPoint(entryPoint);
     }
 
     public void setObfuscated(boolean obfuscated) {
@@ -198,6 +192,10 @@ public abstract class DependencyAnalyzer implements DependencyInfo {
     @Override
     public ClassReaderSource getClassSource() {
         return classSource != null ? classSource : agentClassSource;
+    }
+
+    public ClassReaderSource getUnprocessedClassSource() {
+        return unprocessedClassSource;
     }
 
     public boolean isSynthesizedClass(String className) {
@@ -267,7 +265,7 @@ public abstract class DependencyAnalyzer implements DependencyInfo {
             dep.used = false;
             lock(dep, false);
             deferredTasks.add(() -> {
-                processInvokeDynamic(dep);
+                classSource.getReferenceResolver().use(dep.method.getReference());
                 processMethod(dep);
                 dep.used = true;
             });
@@ -280,25 +278,10 @@ public abstract class DependencyAnalyzer implements DependencyInfo {
 
     public void addDependencyListener(DependencyListener listener) {
         listeners.add(listener);
-        listener.started(agent);
     }
 
     public void addClassTransformer(ClassHolderTransformer transformer) {
         classSource.addTransformer(transformer);
-    }
-
-    public void addEntryPoint(MethodReference methodRef, String... argumentTypes) {
-        ValueType[] parameters = methodRef.getDescriptor().getParameterTypes();
-        if (parameters.length + 1 != argumentTypes.length) {
-            throw new IllegalArgumentException("argumentTypes length does not match the number of method's arguments");
-        }
-        MethodDependency method = linkMethod(methodRef);
-        method.use();
-        DependencyNode[] varNodes = method.getVariables();
-        varNodes[0].propagate(getType(methodRef.getClassName()));
-        for (int i = 0; i < argumentTypes.length; ++i) {
-            varNodes[i + 1].propagate(getType(argumentTypes[i]));
-        }
     }
 
     private int propagationDepth;
@@ -427,10 +410,12 @@ public abstract class DependencyAnalyzer implements DependencyInfo {
             reachedMethods.add(dep.getReference());
             dep.activated = true;
             if (!dep.isMissing()) {
-                for (DependencyListener listener : listeners) {
-                    listener.methodReached(agent, dep);
-                }
-                activateDependencyPlugin(dep);
+                defer(() -> {
+                    for (var listener : listeners) {
+                        listener.methodReached(agent, dep);
+                    }
+                    activateDependencyPlugin(dep);
+                });
             }
         }
         return dep;
@@ -493,8 +478,9 @@ public abstract class DependencyAnalyzer implements DependencyInfo {
     abstract DependencyNode createClassValueNode(int degree, DependencyNode parent);
 
     void scheduleMethodAnalysis(MethodDependency dep) {
+        classSource.getReferenceResolver().use(dep.getReference());
         deferredTasks.add(() -> {
-            processInvokeDynamic(dep);
+            classSource.getReferenceResolver().use(dep.getReference());
             processMethod(dep);
         });
     }
@@ -678,6 +664,12 @@ public abstract class DependencyAnalyzer implements DependencyInfo {
         }
     }
 
+    public void initDependencies() {
+        for (var listener : listeners) {
+            listener.started(agent);
+        }
+    }
+
     public void processDependencies() {
         interrupted = false;
         processQueue();
@@ -756,20 +748,20 @@ public abstract class DependencyAnalyzer implements DependencyInfo {
         }
 
         allNodes.clear();
-        classSource.cleanup();
         agent.cleanup();
         listeners.clear();
-        classSource.innerHierarchy = null;
 
+        classSource.dispose();
         agentClassSource = classSourcePacker.pack(classSource,
                 ClassClosureAnalyzer.build(classSource, new ArrayList<>(classSource.cache.keySet())));
         if (classSource != agentClassSource) {
             classHierarchy = new ClassHierarchy(agentClassSource);
             generatedClassNames.addAll(classSource.getGeneratedClassNames());
         }
+        classSource.innerHierarchy = null;
+
         classSource = null;
         methodReaderCache = null;
-        fieldReaderCache = null;
     }
 
     public void cleanupTypes() {
@@ -832,7 +824,7 @@ public abstract class DependencyAnalyzer implements DependencyInfo {
     }
 
     public void addBootstrapMethodSubstitutor(MethodReference method, BootstrapMethodSubstitutor substitutor) {
-        bootstrapMethodSubstitutors.put(method, substitutor);
+        classSource.bootstrapMethodSubstitutors.put(method, substitutor);
     }
 
     public void addDependencyPlugin(MethodReference method, DependencyPlugin dependencyPlugin) {
@@ -868,70 +860,6 @@ public abstract class DependencyAnalyzer implements DependencyInfo {
         return result;
     }
 
-    private void processInvokeDynamic(MethodDependency methodDep) {
-        if (methodDep.method == null) {
-            return;
-        }
-
-        Program program = methodDep.method.getProgram();
-        if (program == null) {
-            return;
-        }
-
-        ProgramEmitter pe = ProgramEmitter.create(program, classHierarchy);
-        BasicBlockSplitter splitter = new BasicBlockSplitter(program);
-        for (int i = 0; i < program.basicBlockCount(); ++i) {
-            BasicBlock block = program.basicBlockAt(i);
-            for (Instruction insn : block) {
-                if (!(insn instanceof InvokeDynamicInstruction)) {
-                    continue;
-                }
-                block = insn.getBasicBlock();
-
-                InvokeDynamicInstruction indy = (InvokeDynamicInstruction) insn;
-                MethodReference bootstrapMethod = new MethodReference(indy.getBootstrapMethod().getClassName(),
-                        indy.getBootstrapMethod().getName(), indy.getBootstrapMethod().signature());
-                BootstrapMethodSubstitutor substitutor = bootstrapMethodSubstitutors.get(bootstrapMethod);
-                if (substitutor == null) {
-                    NullConstantInstruction nullInsn = new NullConstantInstruction();
-                    nullInsn.setReceiver(indy.getReceiver());
-                    nullInsn.setLocation(indy.getLocation());
-                    insn.replace(nullInsn);
-                    CallLocation location = new CallLocation(methodDep.getReference(), insn.getLocation());
-                    diagnostics.error(location, "Substitutor for bootstrap method {{m0}} was not found",
-                            bootstrapMethod);
-                    continue;
-                }
-
-                BasicBlock splitBlock = splitter.split(block, insn);
-
-                pe.enter(block);
-                pe.setCurrentLocation(indy.getLocation());
-                insn.delete();
-
-                List<ValueEmitter> arguments = new ArrayList<>();
-                for (int k = 0; k < indy.getArguments().size(); ++k) {
-                    arguments.add(pe.var(indy.getArguments().get(k), indy.getMethod().parameterType(k)));
-                }
-                DynamicCallSite callSite = new DynamicCallSite(
-                        methodDep.getReference(), indy.getMethod(),
-                        indy.getInstance() != null ? pe.var(indy.getInstance(),
-                                ValueType.object(methodDep.getMethod().getOwnerName())) : null,
-                        arguments, indy.getBootstrapMethod(), indy.getBootstrapArguments(),
-                        agent);
-                ValueEmitter result = substitutor.substitute(callSite, pe);
-                if (result.getVariable() != null && result.getVariable() != indy.getReceiver()
-                        && indy.getReceiver() != null) {
-                    AssignInstruction assign = new AssignInstruction();
-                    assign.setAssignee(result.getVariable());
-                    assign.setReceiver(indy.getReceiver());
-                    pe.addInstruction(assign);
-                }
-                pe.jump(splitBlock);
-            }
-        }
-        splitter.fixProgram();
-    }
 
     static class IncrementalCache implements IncrementalDependencyProvider, IncrementalDependencyRegistration {
         private final String[] emptyArray = new String[0];

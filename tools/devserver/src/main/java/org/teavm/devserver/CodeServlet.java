@@ -67,6 +67,7 @@ import org.eclipse.jetty.websocket.client.ClientUpgradeRequest;
 import org.eclipse.jetty.websocket.client.WebSocketClient;
 import org.eclipse.jetty.websocket.client.io.UpgradeListener;
 import org.eclipse.jetty.websocket.servlet.WebSocketServletFactory;
+import org.teavm.backend.javascript.JSModuleType;
 import org.teavm.backend.javascript.JavaScriptTarget;
 import org.teavm.cache.InMemoryMethodNodeCache;
 import org.teavm.cache.InMemoryProgramCache;
@@ -86,6 +87,7 @@ import org.teavm.parsing.resource.ResourceClassHolderMapper;
 import org.teavm.tooling.EmptyTeaVMToolLog;
 import org.teavm.tooling.TeaVMProblemRenderer;
 import org.teavm.tooling.TeaVMToolLog;
+import org.teavm.tooling.builder.BuildResult;
 import org.teavm.tooling.builder.SimpleBuildResult;
 import org.teavm.tooling.util.FileSystemWatcher;
 import org.teavm.vm.MemoryBuildTarget;
@@ -119,6 +121,9 @@ public class CodeServlet extends HttpServlet {
     private String proxyProtocol;
     private int proxyPort;
     private String proxyBaseUrl;
+    private Map<String, String> properties = new LinkedHashMap<>();
+    private List<String> preservedClasses = new ArrayList<>();
+    private JSModuleType jsModuleType;
 
     private Map<String, Supplier<InputStream>> sourceFileCache = new HashMap<>();
 
@@ -148,6 +153,9 @@ public class CodeServlet extends HttpServlet {
     private InMemorySymbolTable fileSymbolTable = new InMemorySymbolTable();
     private InMemorySymbolTable variableSymbolTable = new InMemorySymbolTable();
     private ReferenceCache referenceCache = new ReferenceCache();
+    private boolean fileSystemWatched = true;
+    private boolean compileOnStartup = true;
+    private boolean logBuildErrors = true;
 
     public CodeServlet(String mainClass, String[] classPath) {
         this.mainClass = mainClass;
@@ -201,6 +209,30 @@ public class CodeServlet extends HttpServlet {
         this.proxyPath = normalizePath(proxyPath);
     }
 
+    public void setFileSystemWatched(boolean fileSystemWatched) {
+        this.fileSystemWatched = fileSystemWatched;
+    }
+
+    public void setCompileOnStartup(boolean compileOnStartup) {
+        this.compileOnStartup = compileOnStartup;
+    }
+
+    public List<String> getPreservedClasses() {
+        return preservedClasses;
+    }
+
+    public Map<String, String> getProperties() {
+        return properties;
+    }
+
+    public void setJsModuleType(JSModuleType jsModuleType) {
+        this.jsModuleType = jsModuleType;
+    }
+
+    public void setLogBuildErrors(boolean logBuildErrors) {
+        this.logBuildErrors = logBuildErrors;
+    }
+
     public void addProgressHandler(ProgressHandler handler) {
         synchronized (progressHandlers) {
             progressHandlers.add(handler);
@@ -241,9 +273,13 @@ public class CodeServlet extends HttpServlet {
     }
 
     public void buildProject() {
-        synchronized (statusLock) {
-            if (waiting) {
-                buildThread.interrupt();
+        if (buildThread == null) {
+            runCompilerThread();
+        } else {
+            synchronized (statusLock) {
+                if (waiting) {
+                    buildThread.interrupt();
+                }
             }
         }
     }
@@ -312,10 +348,12 @@ public class CodeServlet extends HttpServlet {
             if (!path.startsWith("/")) {
                 path = "/" + path;
             }
-            if (req.getMethod().equals("GET") && path.startsWith(pathToFile) && path.length() > pathToFile.length()) {
+            if ((req.getMethod().equals("GET") || req.getMethod().equals("OPTIONS"))
+                    && path.startsWith(pathToFile) && path.length() > pathToFile.length()) {
+                boolean hasBody = req.getMethod().equals("GET");
                 String fileName = path.substring(pathToFile.length());
                 if (fileName.startsWith("src/")) {
-                    if (serveSourceFile(fileName.substring("src/".length()), resp)) {
+                    if (serveSourceFile(fileName.substring("src/".length()), req, resp, hasBody)) {
                         log.debug("File " + path + " served as source file");
                         return;
                     }
@@ -326,7 +364,7 @@ public class CodeServlet extends HttpServlet {
                         }
                     }
                 } else if (path.equals(deobfuscatorPath)) {
-                    serveDeobfuscator(resp);
+                    serveDeobfuscator(req, resp, hasBody);
                     return;
                 } else {
                     byte[] fileContent;
@@ -336,17 +374,21 @@ public class CodeServlet extends HttpServlet {
                         firstTime = this.firstTime;
                     }
                     if (fileContent != null) {
-                        resp.setStatus(HttpServletResponse.SC_OK);
+                        resp.setStatus(hasBody ? HttpServletResponse.SC_OK : HttpServletResponse.SC_NO_CONTENT);
                         resp.setCharacterEncoding("UTF-8");
-                        resp.setHeader("Access-Control-Allow-Origin", "*");
-                        resp.setContentType(chooseContentType(fileName));
-                        noCache(resp);
-                        resp.getOutputStream().write(fileContent);
+                        allowOrigin(req, resp);
+                        if (!hasBody) {
+                            resp.setHeader("Access-Control-Allow-Methods", "GET");
+                        } else {
+                            resp.setContentType(chooseContentType(fileName));
+                            noCache(resp);
+                            resp.getOutputStream().write(fileContent);
+                        }
                         resp.getOutputStream().flush();
                         log.debug("File " + path + " served as generated file");
                         return;
                     } else if (fileName.equals(this.fileName) && indicator && firstTime) {
-                        serveBootFile(resp);
+                        serveBootFile(req, resp, hasBody);
                         return;
                     }
                 }
@@ -378,14 +420,20 @@ public class CodeServlet extends HttpServlet {
         }
     }
 
-    private void serveDeobfuscator(HttpServletResponse resp) throws IOException {
+    private void serveDeobfuscator(HttpServletRequest req, HttpServletResponse resp, boolean hasBody)
+            throws IOException {
         ClassLoader loader = CodeServlet.class.getClassLoader();
-        resp.setStatus(HttpServletResponse.SC_OK);
-        resp.setCharacterEncoding("UTF-8");
-        resp.setContentType("application/javascript");
-        noCache(resp);
-        try (InputStream input = loader.getResourceAsStream("teavm/devserver/deobfuscator.js")) {
-            IOUtils.copy(input, resp.getOutputStream());
+        resp.setStatus(hasBody ? HttpServletResponse.SC_OK : HttpServletResponse.SC_NO_CONTENT);
+        allowOrigin(req, resp);
+        if (!hasBody) {
+            resp.setHeader("Access-Control-Allow-Methods", "GET");
+        } else {
+            resp.setCharacterEncoding("UTF-8");
+            resp.setContentType("application/javascript");
+            noCache(resp);
+            try (InputStream input = loader.getResourceAsStream("teavm/devserver/deobfuscator.js")) {
+                IOUtils.copy(input, resp.getOutputStream());
+            }
         }
         resp.getOutputStream().flush();
     }
@@ -605,7 +653,7 @@ public class CodeServlet extends HttpServlet {
         }
         stopped = true;
         synchronized (statusLock) {
-            if (waiting) {
+            if (buildThread != null && waiting) {
                 buildThread.interrupt();
             }
         }
@@ -614,23 +662,35 @@ public class CodeServlet extends HttpServlet {
     @Override
     public void init() throws ServletException {
         super.init();
-        Thread thread = new Thread(this::runTeaVM);
+        if (compileOnStartup) {
+            runCompilerThread();
+        }
+    }
+
+    private void runCompilerThread() {
+        var thread = new Thread(this::runTeaVM);
         thread.setName("TeaVM compiler");
         thread.start();
         buildThread = thread;
     }
 
-    private boolean serveSourceFile(String fileName, HttpServletResponse resp) throws IOException {
+    private boolean serveSourceFile(String fileName, HttpServletRequest req, HttpServletResponse resp,
+            boolean hasBody) throws IOException {
         try (InputStream stream = sourceFileCache.computeIfAbsent(fileName, this::findSourceFile).get()) {
             if (stream == null) {
                 return false;
             }
 
-            resp.setStatus(HttpServletResponse.SC_OK);
+            resp.setStatus(hasBody ? HttpServletResponse.SC_OK : HttpServletResponse.SC_NO_CONTENT);
             resp.setCharacterEncoding("UTF-8");
-            resp.setContentType("text/plain");
-            noCache(resp);
-            IOUtils.copy(stream, resp.getOutputStream());
+            allowOrigin(req, resp);
+            if (!hasBody) {
+                resp.setHeader("Access-Control-Allow-Methods", "GET");
+            } else {
+                resp.setContentType("text/plain");
+                noCache(resp);
+                IOUtils.copy(stream, resp.getOutputStream());
+            }
             resp.getOutputStream().flush();
             return true;
         }
@@ -688,12 +748,18 @@ public class CodeServlet extends HttpServlet {
         }
     }
 
-    private void serveBootFile(HttpServletResponse resp) throws IOException {
-        resp.setStatus(HttpServletResponse.SC_OK);
+    private void serveBootFile(HttpServletRequest req, HttpServletResponse resp, boolean hasBody) throws IOException {
+        resp.setStatus(hasBody ? HttpServletResponse.SC_OK : HttpServletResponse.SC_NO_CONTENT);
         resp.setCharacterEncoding("UTF-8");
-        resp.setContentType("text/plain");
-        resp.getWriter().write("function main() { }\n");
-        resp.getWriter().write(getIndicatorScript(true));
+        allowOrigin(req, resp);
+        if (!hasBody) {
+            resp.setHeader("Access-Control-Allow-Methods", "GET");
+        } else {
+            resp.setContentType("text/plain");
+            noCache(resp);
+            resp.getWriter().write("function main() { }\n");
+            resp.getWriter().write(getIndicatorScript(true));
+        }
         resp.getWriter().flush();
         log.debug("Served boot file");
     }
@@ -702,8 +768,13 @@ public class CodeServlet extends HttpServlet {
         try {
             initBuilder();
 
+            var hasJob = true;
             while (!stopped) {
-                buildOnce();
+                if (hasJob) {
+                    buildOnce();
+                } else {
+                    emptyBuild();
+                }
 
                 if (stopped) {
                     break;
@@ -713,11 +784,22 @@ public class CodeServlet extends HttpServlet {
                     synchronized (statusLock) {
                         waiting = true;
                     }
-                    watcher.waitForChange(750);
+                    if (fileSystemWatched) {
+                        watcher.waitForChange(750);
+                        log.info("Changes detected. Recompiling.");
+                    } else {
+                        while (true) {
+                            try {
+                                Thread.sleep(1000);
+                            } catch (InterruptedException e) {
+                                break;
+                            }
+                        }
+                        watcher.pollChanges();
+                    }
                     synchronized (statusLock) {
                         waiting = false;
                     }
-                    log.info("Changes detected. Recompiling.");
                 } catch (InterruptedException e) {
                     if (stopped) {
                         break;
@@ -736,6 +818,7 @@ public class CodeServlet extends HttpServlet {
                 }
 
                 classSource.evict(staleClasses);
+                hasJob = !staleClasses.isEmpty();
             }
             log.info("Build process stopped");
         } catch (Throwable e) {
@@ -805,7 +888,9 @@ public class CodeServlet extends HttpServlet {
         jsTarget.setObfuscated(false);
         jsTarget.setAstCache(astCache);
         jsTarget.setDebugEmitter(debugInformationBuilder);
-        jsTarget.setTopLevelNameLimit(2000);
+        if (jsModuleType != null) {
+            jsTarget.setModuleType(jsModuleType);
+        }
         jsTarget.setStrict(true);
         vm.setOptimizationLevel(TeaVMOptimizationLevel.SIMPLE);
         vm.setCacheStatus(classSource);
@@ -813,9 +898,13 @@ public class CodeServlet extends HttpServlet {
         vm.setProgressListener(progressListener);
         vm.setProgramCache(programCache);
         vm.installPlugins();
+        for (var className : preservedClasses) {
+            vm.preserveType(className);
+        }
+        vm.getProperties().putAll(properties);
 
         vm.setLastKnownClasses(lastReachedClasses);
-        vm.entryPoint(mainClass);
+        vm.setEntryPoint(mainClass);
 
         log.info("Starting build");
         progressListener.last = 0;
@@ -825,6 +914,12 @@ public class CodeServlet extends HttpServlet {
         generateDebug(debugInformationBuilder);
 
         postBuild(vm, startTime);
+    }
+
+    private void emptyBuild() {
+        fireBuildStarted();
+        log.info("No files changed, nothing to do");
+        fireBuildCompleteWithResult(null);
     }
 
     private ClassReaderSource packClasses(ClassReaderSource source, Collection<? extends String> classNames) {
@@ -889,7 +984,6 @@ public class CodeServlet extends HttpServlet {
     private void postBuild(TeaVM vm, long startTime) {
         if (!vm.wasCancelled()) {
             log.info("Recompiled stale methods: " + programCache.getPendingItemsCount());
-            fireBuildComplete(vm);
             if (vm.getProblemProvider().getSevereProblems().isEmpty()) {
                 log.info("Build complete successfully");
                 saveNewResult();
@@ -903,7 +997,10 @@ public class CodeServlet extends HttpServlet {
                 reportCompilationComplete(false);
             }
             printStats(vm, startTime);
-            TeaVMProblemRenderer.describeProblems(vm, log);
+            if (logBuildErrors) {
+                TeaVMProblemRenderer.describeProblems(vm, log);
+            }
+            fireBuildComplete(vm);
         } else {
             log.info("Build cancelled");
             fireBuildCancelled();
@@ -1033,9 +1130,12 @@ public class CodeServlet extends HttpServlet {
     }
 
     private void fireBuildComplete(TeaVM vm) {
-        SimpleBuildResult result = new SimpleBuildResult(vm, new ArrayList<>(buildTarget.getNames()));
-        for (DevServerListener listener : listeners) {
-            listener.compilationComplete(result);
+        fireBuildCompleteWithResult(new SimpleBuildResult(vm));
+    }
+
+    private void fireBuildCompleteWithResult(BuildResult buildResult) {
+        for (var listener : listeners) {
+            listener.compilationComplete(buildResult);
         }
     }
 
@@ -1060,13 +1160,13 @@ public class CodeServlet extends HttpServlet {
                     end = 1000;
                     break;
             }
-            phaseLimit = count;
+            phaseLimit = Math.max(1, count);
             return progressReached(0);
         }
 
         @Override
         public TeaVMProgressFeedback progressReached(int progress) {
-            if (indicator) {
+            if (indicator || !listeners.isEmpty()) {
                 int current = start + Math.min(progress, phaseLimit) * (end - start) / phaseLimit;
                 if (current != last) {
                     if (current - last > 10 || System.currentTimeMillis() - lastTime > 100) {
@@ -1116,5 +1216,17 @@ public class CodeServlet extends HttpServlet {
 
     static void noCache(HttpServletResponse response) {
         response.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+    }
+
+    static void allowOrigin(HttpServletRequest req, HttpServletResponse resp) {
+        String origin = req.getHeader("Origin");
+        if (origin != null) {
+            resp.setHeader("Access-Control-Allow-Origin", origin);
+            resp.setHeader("Vary", "Origin");
+        } else {
+            resp.setHeader("Access-Control-Allow-Origin", "*");
+        }
+        resp.setHeader("Access-Control-Allow-Credentials", "true");
+        resp.setHeader("Access-Control-Allow-Private-Network", "true");
     }
 }

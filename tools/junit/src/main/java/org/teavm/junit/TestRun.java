@@ -17,28 +17,25 @@ package org.teavm.junit;
 
 import java.io.File;
 import java.lang.reflect.Method;
-import org.junit.runner.Description;
 
 class TestRun {
     private String name;
     private File baseDirectory;
     private Method method;
-    private Description description;
     private String fileName;
-    private RunKind kind;
-    private TestRunCallback callback;
+    private TestPlatform kind;
     private String argument;
+    private boolean module;
 
-    TestRun(String name, File baseDirectory, Method method, Description description, String fileName, RunKind kind,
-            String argument, TestRunCallback callback) {
+    TestRun(String name, File baseDirectory, Method method, String fileName, TestPlatform kind,
+            String argument, boolean module) {
         this.name = name;
         this.baseDirectory = baseDirectory;
         this.method = method;
-        this.description = description;
         this.fileName = fileName;
         this.kind = kind;
         this.argument = argument;
-        this.callback = callback;
+        this.module = module;
     }
 
     public String getName() {
@@ -53,15 +50,11 @@ class TestRun {
         return method;
     }
 
-    public Description getDescription() {
-        return description;
-    }
-
     public String getFileName() {
         return fileName;
     }
 
-    public RunKind getKind() {
+    public TestPlatform getKind() {
         return kind;
     }
 
@@ -69,7 +62,7 @@ class TestRun {
         return argument;
     }
 
-    public TestRunCallback getCallback() {
-        return callback;
+    public boolean isModule() {
+        return module;
     }
 }

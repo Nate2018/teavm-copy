@@ -112,6 +112,16 @@ public abstract class TSimpleStreamImpl<T> implements TStream<T> {
     }
 
     @Override
+    public TStream<T> takeWhile(Predicate<? super T> predicate) {
+        return new TTakeWhileStream<>(this, predicate);
+    }
+
+    @Override
+    public TStream<T> dropWhile(Predicate<? super T> predicate) {
+        return new TDropWhileStream<>(this, predicate);
+    }
+
+    @Override
     public TStream<T> skip(long n) {
         return new TSkippingStreamImpl<>(this, (int) n);
     }

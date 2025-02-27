@@ -16,19 +16,24 @@
 package org.teavm.classlib.java.util.stream;
 
 import java.util.Comparator;
+import java.util.List;
 import java.util.Optional;
 import java.util.function.BiConsumer;
 import java.util.function.BiFunction;
 import java.util.function.BinaryOperator;
 import java.util.function.Consumer;
+import java.util.function.DoubleConsumer;
 import java.util.function.Function;
+import java.util.function.IntConsumer;
 import java.util.function.IntFunction;
+import java.util.function.LongConsumer;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.function.ToDoubleFunction;
 import java.util.function.ToIntFunction;
 import java.util.function.ToLongFunction;
 import java.util.function.UnaryOperator;
+import org.teavm.classlib.java.util.TTemplateCollections;
 import org.teavm.classlib.java.util.stream.impl.TArrayStreamImpl;
 import org.teavm.classlib.java.util.stream.impl.TEmptyStreamImpl;
 import org.teavm.classlib.java.util.stream.impl.TGenerateStream;
@@ -40,7 +45,8 @@ import org.teavm.classlib.java.util.stream.impl.TSpecializedConcatStream;
 import org.teavm.classlib.java.util.stream.impl.TStreamBuilder;
 
 public interface TStream<T> extends TBaseStream<T, TStream<T>> {
-    interface Builder<T> {
+    interface Builder<T> extends Consumer<T> {
+        @Override
         void accept(T t);
 
         default Builder<T> add(T t) {
@@ -69,6 +75,38 @@ public interface TStream<T> extends TBaseStream<T, TStream<T>> {
 
     TDoubleStream flatMapToDouble(Function<? super T, ? extends TDoubleStream> mapper);
 
+    default <R> TStream<R> mapMulti(BiConsumer<? super T, ? super Consumer<R>> mapper) {
+        return flatMap(e -> {
+            TStream.Builder<R> builder = builder();
+            mapper.accept(e, builder);
+            return builder.build();
+        });
+    }
+
+    default TIntStream mapMultiToInt(BiConsumer<? super T, ? super IntConsumer> mapper) {
+        return flatMapToInt(e -> {
+            TIntStream.Builder builder = TIntStream.builder();
+            mapper.accept(e, builder);
+            return builder.build();
+        });
+    }
+
+    default TLongStream mapMultiToLong(BiConsumer<? super T, ? super LongConsumer> mapper) {
+        return flatMapToLong(e -> {
+            TLongStream.Builder builder = TLongStream.builder();
+            mapper.accept(e, builder);
+            return builder.build();
+        });
+    }
+
+    default TDoubleStream mapMultiToDouble(BiConsumer<? super T, ? super DoubleConsumer> mapper) {
+        return flatMapToDouble(e -> {
+            TDoubleStream.Builder builder = TDoubleStream.builder();
+            mapper.accept(e, builder);
+            return builder.build();
+        });
+    }
+
     TStream<T> distinct();
 
     TStream<T> sorted();
@@ -78,6 +116,10 @@ public interface TStream<T> extends TBaseStream<T, TStream<T>> {
     TStream<T> peek(Consumer<? super T> action);
 
     TStream<T> limit(long maxSize);
+
+    TStream<T> takeWhile(Predicate<? super T> predicate);
+
+    TStream<T> dropWhile(Predicate<? super T> predicate);
 
     TStream<T> skip(long n);
 
@@ -136,6 +178,10 @@ public interface TStream<T> extends TBaseStream<T, TStream<T>> {
         return new TIterateStream<>(seed, f);
     }
 
+    static <T> TStream<T> iterate(T seed, Predicate<? super T> pr, UnaryOperator<T> f) {
+        return new TIterateStream<>(seed, pr, f);
+    }
+
     static <T> TStream<T> generate(Supplier<T> s) {
         return new TGenerateStream<>(s);
     }
@@ -147,5 +193,10 @@ public interface TStream<T> extends TBaseStream<T, TStream<T>> {
         } else {
             return new TGenericConcatStream<>(a, b);
         }
+    }
+
+    @SuppressWarnings("unchecked")
+    default List<T> toList() {
+        return (List<T>) new TTemplateCollections.ImmutableArrayList<>(toArray());
     }
 }

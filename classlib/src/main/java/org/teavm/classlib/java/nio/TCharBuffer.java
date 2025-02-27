@@ -15,7 +15,8 @@
  */
 package org.teavm.classlib.java.nio;
 
-import org.teavm.classlib.java.io.TIOException;
+import java.io.IOException;
+import java.util.Objects;
 import org.teavm.classlib.java.lang.TReadable;
 
 public abstract class TCharBuffer extends TBuffer implements Comparable<TCharBuffer>, Appendable,
@@ -46,13 +47,8 @@ public abstract class TCharBuffer extends TBuffer implements Comparable<TCharBuf
     }
 
     @Override
-    public int read(TCharBuffer target) throws TIOException {
-        if (target == null) {
-            throw new NullPointerException("Target is null");
-        }
-        if (target.isReadOnly()) {
-            throw new TReadOnlyBufferException();
-        }
+    public int read(TCharBuffer target) throws IOException {
+        Objects.requireNonNull(target);
         if (!hasRemaining()) {
             return -1;
         }
@@ -89,7 +85,7 @@ public abstract class TCharBuffer extends TBuffer implements Comparable<TCharBuf
     public abstract TCharBuffer put(int index, char c);
 
     public TCharBuffer get(char[] dst, int offset, int length) {
-        if (offset < 0 || offset >= dst.length) {
+        if (offset < 0 || offset > dst.length) {
             throw new IndexOutOfBoundsException("Offset " + offset + " is outside of range [0;" + dst.length + ")");
         }
         if (offset + length > dst.length) {
@@ -138,7 +134,7 @@ public abstract class TCharBuffer extends TBuffer implements Comparable<TCharBuf
         if (remaining() < length) {
             throw new TBufferOverflowException();
         }
-        if (offset < 0 || offset >= src.length) {
+        if (offset < 0 || offset > src.length) {
             throw new IndexOutOfBoundsException("Offset " + offset + " is outside of range [0;" + src.length + ")");
         }
         if (offset + length > src.length) {
@@ -168,7 +164,7 @@ public abstract class TCharBuffer extends TBuffer implements Comparable<TCharBuf
         if (remaining() < sz) {
             throw new TBufferOverflowException();
         }
-        if (start < 0 || start >= src.length()) {
+        if (start < 0 || start > src.length()) {
             throw new IndexOutOfBoundsException("Start " + start + " is outside of range [0;" + src.length() + ")");
         }
         if (end > src.length()) {

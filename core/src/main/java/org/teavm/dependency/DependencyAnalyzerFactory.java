@@ -22,5 +22,5 @@ import org.teavm.model.ReferenceCache;
 
 public interface DependencyAnalyzerFactory {
     DependencyAnalyzer create(ClassReaderSource classSource, ClassLoader classLoader, ServiceRepository services,
-            Diagnostics diagnostics, ReferenceCache referenceCache);
+            Diagnostics diagnostics, ReferenceCache referenceCache, String[] platformTags);
 }

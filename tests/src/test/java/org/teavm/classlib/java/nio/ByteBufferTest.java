@@ -17,20 +17,22 @@ package org.teavm.classlib.java.nio;
 
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.CoreMatchers.sameInstance;
-import static org.junit.Assert.assertThat;
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.junit.Assert.assertArrayEquals;
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.fail;
 import java.nio.BufferOverflowException;
 import java.nio.BufferUnderflowException;
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.InvalidMarkException;
 import java.nio.ReadOnlyBufferException;
 import org.junit.Test;
 import org.junit.runner.RunWith;
+import org.teavm.classlib.java.lang.DoubleTest;
 import org.teavm.junit.TeaVMTestRunner;
-import org.teavm.junit.WholeClassCompilation;
 
 @RunWith(TeaVMTestRunner.class)
-@WholeClassCompilation
 public class ByteBufferTest {
     @Test
     public void allocatesDirect() {
@@ -151,6 +153,18 @@ public class ByteBufferTest {
         assertThat(buffer.get(15), is((byte) 24));
         buffer.put(16, (byte) 25);
         assertThat(slice.get(1), is((byte) 25));
+    }
+
+    @Test
+    public void sliceOfSlice() {
+        ByteBuffer buffer = ByteBuffer.allocate(100);
+        buffer.put(new byte[10]);
+        ByteBuffer slice1 = buffer.slice();
+        slice1.put(new byte[15]);
+        ByteBuffer slice2 = slice1.slice();
+
+        assertEquals(25, slice2.arrayOffset());
+        assertEquals(75, slice2.capacity());
     }
 
     @Test
@@ -564,6 +578,82 @@ public class ByteBufferTest {
     }
 
     @Test
+    public void putsFloat() {
+        var array = new byte[8];
+        var buffer = ByteBuffer.wrap(array);
+        buffer.putFloat(1f);
+        buffer.putFloat(23f);
+        try {
+            buffer.putFloat(42f);
+            fail("Exception expected");
+        } catch (BufferOverflowException e) {
+            // expected
+        }
+
+        assertArrayEquals(new byte[] { 63, -128, 0, 0, 65, -72, 0, 0 }, array);
+
+        buffer.putFloat(1, 2f);
+        assertArrayEquals(new byte[] { 63, 64, 0, 0, 0, -72, 0, 0 }, array);
+    }
+
+    @Test
+    public void getsFloat() {
+        byte[] array = { 63, -128, 0, 0, 65, -72, 0, 0 };
+        var buffer = ByteBuffer.wrap(array);
+        assertEquals(1f, buffer.getFloat(), 0.0001f);
+        assertEquals(23f, buffer.getFloat(), 0.0001f);
+        try {
+            buffer.getFloat();
+            fail("Exception expected");
+        } catch (BufferUnderflowException e) {
+            // expected
+        }
+
+        array[1] = 64;
+        array[4] = 0;
+        assertEquals(2f, buffer.getFloat(1), 0.0001f);
+    }
+
+    @Test
+    public void putsDouble() {
+        var array = new byte[16];
+        var buffer = ByteBuffer.wrap(array);
+        buffer.putDouble(1.0);
+        buffer.putDouble(23.0);
+        try {
+            buffer.putDouble(42.0);
+            fail("Exception expected");
+        } catch (BufferOverflowException e) {
+            // expected
+        }
+
+        assertArrayEquals(new byte[] { 63, -16, 0, 0, 0, 0, 0, 0, 64, 55, 0, 0, 0, 0, 0, 0 }, array);
+
+        buffer.putDouble(1, 2.0);
+        assertArrayEquals(new byte[] { 63, 64, 0, 0, 0, 0, 0, 0, 0, 55, 0, 0, 0, 0, 0, 0 }, array);
+        buffer.putDouble(0, DoubleTest.OTHER_NAN);
+        assertArrayEquals(new byte[] { 127, -8, 0, 0, 0, 0, 0, 1, 0, 55, 0, 0, 0, 0, 0, 0 }, array);
+    }
+
+    @Test
+    public void getsDouble() {
+        byte[] array = { 63, -16, 0, 0, 0, 0, 0, 0, 64, 55, 0, 0, 0, 0, 0, 0 };
+        var buffer = ByteBuffer.wrap(array);
+        assertEquals(1.0, buffer.getDouble(), 0.0001);
+        assertEquals(23.0, buffer.getDouble(), 0.0001);
+        try {
+            buffer.getDouble();
+            fail("Exception expected");
+        } catch (BufferUnderflowException e) {
+            // expected
+        }
+
+        array[1] = 64;
+        array[8] = 0;
+        assertEquals(2.0, buffer.getDouble(1), 0.0001);
+    }
+
+    @Test
     public void getsLong() {
         byte[] array = {0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38};
         ByteBuffer buffer = ByteBuffer.wrap(array);
@@ -627,5 +717,23 @@ public class ByteBufferTest {
         } catch (IndexOutOfBoundsException e) {
             // expected
         }
+
+        buffer = ByteBuffer.wrap(array).order(ByteOrder.LITTLE_ENDIAN);
+        buffer.putLong(1, 0x2324252627282930L);
+        assertThat(buffer.get(1), is((byte) 0x30));
+        assertThat(buffer.get(2), is((byte) 0x29));
+        assertThat(buffer.get(3), is((byte) 0x28));
+        assertThat(buffer.get(4), is((byte) 0x27));
+        assertThat(buffer.get(5), is((byte) 0x26));
+        assertThat(buffer.get(6), is((byte) 0x25));
+        assertThat(buffer.get(7), is((byte) 0x24));
+        assertThat(buffer.get(8), is((byte) 0x23));
+    }
+
+    @Test
+    public void putGetEmptyArray() {
+        ByteBuffer bb = ByteBuffer.allocate(0);
+        bb.put(new byte[0]);
+        bb.get(new byte[0]);
     }
 }

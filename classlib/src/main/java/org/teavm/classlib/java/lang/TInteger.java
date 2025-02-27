@@ -16,16 +16,18 @@
 package org.teavm.classlib.java.lang;
 
 import static org.teavm.classlib.impl.IntegerUtil.toUnsignedLogRadixString;
+import java.util.Objects;
 import org.teavm.backend.javascript.spi.InjectedBy;
 import org.teavm.interop.NoSideEffects;
 
 public class TInteger extends TNumber implements TComparable<TInteger> {
     public static final int SIZE = 32;
+    public static final int BYTES = SIZE / Byte.SIZE;
     public static final int MIN_VALUE = 0x80000000;
     public static final int MAX_VALUE = 0x7FFFFFFF;
     public static final Class<Integer> TYPE = int.class;
     private static TInteger[] integerCache;
-    private int value;
+    private final int value;
 
     public TInteger(int value) {
         this.value = value;
@@ -43,7 +45,7 @@ public class TInteger extends TNumber implements TComparable<TInteger> {
     }
 
     public static int hashCode(int value) {
-        return (value >>> 4) ^ (value << 28) ^ (value << 8) ^ (value >>> 24);
+        return value;
     }
 
     public static String toHexString(int i) {
@@ -63,42 +65,60 @@ public class TInteger extends TNumber implements TComparable<TInteger> {
     }
 
     public static int parseInt(String s, int radix) throws TNumberFormatException {
+        if (s == null) {
+            throw new TNumberFormatException("String is null");
+        }
+        return parseIntImpl(s, 0, s.length(), radix);
+    }
+
+    public static int parseInt(CharSequence s, int beginIndex, int endIndex, int radix) throws TNumberFormatException {
+        return parseIntImpl(Objects.requireNonNull(s), beginIndex, endIndex, radix);
+    }
+
+    private static int parseIntImpl(CharSequence s, int beginIndex, int endIndex, int radix)
+            throws TNumberFormatException {
+        if (beginIndex == endIndex) {
+            throw new TNumberFormatException("String is empty");
+        }
         if (radix < TCharacter.MIN_RADIX || radix > TCharacter.MAX_RADIX) {
             throw new TNumberFormatException("Illegal radix: " + radix);
         }
-        if (s == null || s.isEmpty()) {
-            throw new TNumberFormatException("String is null or empty");
-        }
         boolean negative = false;
-        int index = 0;
-        switch (s.charAt(0)) {
+        int index = beginIndex;
+        switch (s.charAt(index)) {
             case '-':
                 negative = true;
-                index = 1;
+                index++;
                 break;
             case '+':
-                index = 1;
+                index++;
                 break;
         }
         int value = 0;
-        if (index == s.length()) {
+        int maxValue = 1 + TInteger.MAX_VALUE / radix;
+        if (index == endIndex) {
             throw new TNumberFormatException();
         }
-        while (index < s.length()) {
-            int digit = TCharacter.getNumericValue(s.charAt(index++));
+        while (index < endIndex) {
+            int digit = decodeDigit(s.charAt(index++));
             if (digit < 0) {
-                throw new TNumberFormatException("String contains invalid digits: " + s);
+                throw new TNumberFormatException("String contains invalid digits: "
+                        + s.subSequence(beginIndex, endIndex));
             }
             if (digit >= radix) {
-                throw new TNumberFormatException("String contains digits out of radix " + radix
-                        + ": " + s);
+                throw new TNumberFormatException("String contains digits out of radix " + radix + ": "
+                        + s.subSequence(beginIndex, endIndex));
+            }
+            if (value > maxValue) {
+                throw new TNumberFormatException("The value is too big for integer type");
             }
             value = radix * value + digit;
             if (value < 0) {
-                if (index == s.length() && value == MIN_VALUE && negative) {
+                if (index == endIndex && value == MIN_VALUE && negative) {
                     return MIN_VALUE;
                 }
-                throw new TNumberFormatException("The value is too big for int type: " + s);
+                throw new TNumberFormatException("The value is too big for int type: "
+                        + s.subSequence(beginIndex, endIndex));
             }
         }
         return negative ? -value : value;
@@ -189,8 +209,8 @@ public class TInteger extends TNumber implements TComparable<TInteger> {
     }
 
     public static TInteger decode(String nm) throws TNumberFormatException {
-        if (nm == null || nm.isEmpty()) {
-            throw new TNumberFormatException("Can't parse empty or null string");
+        if (nm.isEmpty()) {
+            throw new TNumberFormatException("Can't parse empty string");
         }
         int index = 0;
         boolean negaive = false;
@@ -223,10 +243,14 @@ public class TInteger extends TNumber implements TComparable<TInteger> {
             throw new TNumberFormatException("The string does not represent a number");
         }
         int value = 0;
+        int maxValue = 1 + TInteger.MAX_VALUE / radix;
         while (index < nm.length()) {
             int digit = decodeDigit(nm.charAt(index++));
-            if (digit >= radix) {
+            if (digit < 0 || digit >= radix) {
                 throw new TNumberFormatException("The string does not represent a number");
+            }
+            if (value > maxValue) {
+                throw new TNumberFormatException("The value is too big for integer type");
             }
             value = value * radix + digit;
             if (value < 0) {
@@ -247,7 +271,7 @@ public class TInteger extends TNumber implements TComparable<TInteger> {
         } else if (c >= 'A' && c <= 'Z') {
             return c - 'A' + 10;
         } else {
-            return 255;
+            return -1;
         }
     }
 
@@ -316,11 +340,11 @@ public class TInteger extends TNumber implements TComparable<TInteger> {
     }
 
     public static int highestOneBit(int i) {
-        return 0x80000000 >>> numberOfLeadingZeros(i);
+        return i & (0x80000000 >>> numberOfLeadingZeros(i));
     }
 
     public static int lowestOneBit(int i) {
-        return 1 << numberOfTrailingZeros(i);
+        return -i & i;
     }
 
     public static int bitCount(int i) {
@@ -368,4 +392,8 @@ public class TInteger extends TNumber implements TComparable<TInteger> {
     @InjectedBy(IntegerNativeGenerator.class)
     @NoSideEffects
     public static native int remainderUnsigned(int dividend, int divisor);
+
+    @InjectedBy(IntegerNativeGenerator.class)
+    @NoSideEffects
+    public static native int compareUnsigned(int a, int b);
 }

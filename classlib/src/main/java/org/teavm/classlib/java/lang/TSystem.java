@@ -15,21 +15,24 @@
  */
 package org.teavm.classlib.java.lang;
 
+import java.lang.reflect.Array;
 import java.util.Enumeration;
 import java.util.Properties;
 import org.teavm.backend.c.intrinsic.RuntimeInclude;
+import org.teavm.backend.c.runtime.Memory;
+import org.teavm.backend.c.runtime.fs.CFileSystem;
 import org.teavm.backend.javascript.spi.GeneratedBy;
+import org.teavm.backend.wasm.runtime.WasmSupport;
 import org.teavm.classlib.PlatformDetector;
-import org.teavm.classlib.fs.VirtualFileSystemProvider;
-import org.teavm.classlib.fs.c.CFileSystem;
-import org.teavm.classlib.impl.c.Memory;
+import org.teavm.classlib.impl.console.JSStderrPrintStream;
+import org.teavm.classlib.impl.console.JSStdoutPrintStream;
 import org.teavm.classlib.impl.console.StderrOutputStream;
 import org.teavm.classlib.impl.console.StdoutOutputStream;
 import org.teavm.classlib.java.io.TConsole;
 import org.teavm.classlib.java.io.TInputStream;
-import org.teavm.classlib.java.io.TOutputStream;
 import org.teavm.classlib.java.io.TPrintStream;
 import org.teavm.classlib.java.lang.reflect.TArray;
+import org.teavm.dependency.PluggableDependency;
 import org.teavm.interop.Address;
 import org.teavm.interop.DelegateTo;
 import org.teavm.interop.Import;
@@ -40,6 +43,7 @@ import org.teavm.runtime.Allocator;
 import org.teavm.runtime.GC;
 import org.teavm.runtime.RuntimeArray;
 import org.teavm.runtime.RuntimeClass;
+import org.teavm.runtime.fs.VirtualFileSystemProvider;
 
 public final class TSystem extends TObject {
     private static TPrintStream outCache;
@@ -52,14 +56,22 @@ public final class TSystem extends TObject {
 
     public static TPrintStream out() {
         if (outCache == null) {
-            outCache = new TPrintStream((TOutputStream) (Object) StdoutOutputStream.INSTANCE, false);
+            if (PlatformDetector.isJavaScript() || PlatformDetector.isWebAssemblyGC()) {
+                outCache = (TPrintStream) (Object) new JSStdoutPrintStream();
+            } else {
+                outCache = new TPrintStream(StdoutOutputStream.INSTANCE, false);
+            }
         }
         return outCache;
     }
 
     public static TPrintStream err() {
         if (errCache == null) {
-            errCache = new TPrintStream((TOutputStream) (Object) StderrOutputStream.INSTANCE, false);
+            if (PlatformDetector.isJavaScript() || PlatformDetector.isWebAssemblyGC()) {
+                errCache = (TPrintStream) (Object) new JSStderrPrintStream();
+            } else {
+                errCache = new TPrintStream(StderrOutputStream.INSTANCE, false);
+            }
         }
         return errCache;
     }
@@ -73,6 +85,10 @@ public final class TSystem extends TObject {
 
     public static TConsole console() {
         return null;
+    }
+
+    public static TSecurityManager getSecurityManager() {
+        return new TSecurityManager();
     }
 
     public static void arraycopy(TObject src, int srcPos, TObject dest, int destPos, int length) {
@@ -110,10 +126,19 @@ public final class TSystem extends TObject {
         doArrayCopy(src, srcPos, dest, destPos, length);
     }
 
+    static void fastArraycopy(Object src, int srcPos, Object dest, int destPos, int length) {
+        if (srcPos < 0 || destPos < 0 || length < 0 || srcPos + length > Array.getLength(src)
+                || destPos + length > Array.getLength(dest)) {
+            throw new TIndexOutOfBoundsException();
+        }
+        doArrayCopy(src, srcPos, dest, destPos, length);
+    }
+
     @GeneratedBy(SystemNativeGenerator.class)
+    @PluggableDependency(SystemDependencyPlugin.class)
     @DelegateTo("doArrayCopyLowLevel")
     @NoSideEffects
-    private static native void doArrayCopy(Object src, int srcPos, Object dest, int destPos, int length);
+    static native void doArrayCopy(Object src, int srcPos, Object dest, int destPos, int length);
 
     @Unmanaged
     static void doArrayCopyLowLevel(RuntimeArray src, int srcPos, RuntimeArray dest, int destPos, int length) {
@@ -124,10 +149,11 @@ public final class TSystem extends TObject {
             GC.writeBarrier(dest);
         }
 
-        Address srcAddress = Address.align(src.toAddress().add(RuntimeArray.class, 1), itemSize);
+        var offset = Address.align(Address.fromInt(0).add(RuntimeArray.class, 1), itemSize).toInt();
+        Address srcAddress = src.toAddress().add(offset);
         srcAddress = srcAddress.add(itemSize * srcPos);
 
-        Address destAddress = Address.align(dest.toAddress().add(RuntimeArray.class, 1), itemSize);
+        Address destAddress = dest.toAddress().add(offset);
         destAddress = destAddress.add(itemSize * destPos);
 
         Allocator.moveMemoryBlock(srcAddress, destAddress, length * itemSize);
@@ -140,14 +166,11 @@ public final class TSystem extends TObject {
 
     private static long currentTimeMillisLowLevel() {
         if (PlatformDetector.isWebAssembly()) {
-            return (long) currentTimeMillisWasm();
+            return WasmSupport.currentTimeMillis();
         } else {
-            return (long) currentTimeMillisC();
+            return currentTimeMillisC();
         }
     }
-
-    @Import(name = "currentTimeMillis", module = "teavm")
-    private static native double currentTimeMillisWasm();
 
     @Import(name = "teavm_currentTimeMillis")
     @RuntimeInclude("time.h")

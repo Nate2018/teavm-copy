@@ -91,6 +91,11 @@ public final class ExceptionHandling {
     }
 
     @Unmanaged
+    public static Throwable peekException() {
+        return thrownException;
+    }
+
+    @Unmanaged
     public static void throwException(Throwable exception) {
         thrownException = exception;
 
@@ -117,43 +122,45 @@ public final class ExceptionHandling {
                 }
 
                 if (!isJumpSupported()) {
-                    ShadowStack.setExceptionHandlerId(stackFrame, callSiteId - 1);
+                    ShadowStack.setExceptionHandlerSkip(stackFrame);
                 }
             }
             stackFrame = ShadowStack.getNextStackFrame(stackFrame);
         }
 
         if (stackFrame == null) {
-            stackFrame = ShadowStack.getStackTop();
-            while (stackFrame != null) {
-                int callSiteId = ShadowStack.getCallSiteId(stackFrame);
-                if (callSiteId >= 0) {
-                    ShadowStack.setExceptionHandlerId(stackFrame, callSiteId + 1);
+            if (!isJumpSupported()) {
+                stackFrame = ShadowStack.getStackTop();
+                while (stackFrame != null) {
+                    int callSiteId = ShadowStack.getCallSiteId(stackFrame);
+                    if (callSiteId >= 0) {
+                        ShadowStack.setExceptionHandlerRestore(stackFrame);
+                    }
+                    stackFrame = ShadowStack.getNextStackFrame(stackFrame);
                 }
-                stackFrame = ShadowStack.getNextStackFrame(stackFrame);
             }
             printStack();
             abort();
-        } else if (isJumpSupported()) {
+        } else {
             jumpToFrame(stackFrame, handlerId);
         }
     }
 
     @Unmanaged
     public static void throwClassCastException() {
-        throw new ClassCastException();
+        throwException(new ClassCastException());
     }
 
     @Unmanaged
     @Export(name = "teavm_throwNullPointerException")
     public static void throwNullPointerException() {
-        throw new NullPointerException();
+        throwException(new NullPointerException());
     }
 
     @Unmanaged
     @Export(name = "teavm_throwArrayIndexOutOfBoundsException")
     public static void throwArrayIndexOutOfBoundsException() {
-        throw new ArrayIndexOutOfBoundsException();
+        throwException(new ArrayIndexOutOfBoundsException());
     }
 
     @Unmanaged

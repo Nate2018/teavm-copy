@@ -22,11 +22,18 @@ import java.util.ServiceLoader;
 import org.teavm.backend.c.TeaVMCHost;
 import org.teavm.backend.javascript.TeaVMJavaScriptHost;
 import org.teavm.backend.wasm.TeaVMWasmHost;
+import org.teavm.backend.wasm.gc.TeaVMWasmGCHost;
 import org.teavm.classlib.ReflectionSupplier;
 import org.teavm.classlib.impl.currency.CountriesGenerator;
 import org.teavm.classlib.impl.currency.CurrenciesGenerator;
 import org.teavm.classlib.impl.currency.CurrencyHelper;
 import org.teavm.classlib.impl.lambda.LambdaMetafactorySubstitutor;
+import org.teavm.classlib.impl.record.ObjectMethodsSubstitutor;
+import org.teavm.classlib.impl.reflection.ReflectionTransformer;
+import org.teavm.classlib.impl.string.DefaultStringTransformer;
+import org.teavm.classlib.impl.string.JSStringConstructorGenerator;
+import org.teavm.classlib.impl.string.JSStringInjector;
+import org.teavm.classlib.impl.string.JSStringTransformer;
 import org.teavm.classlib.impl.tz.DateTimeZoneProvider;
 import org.teavm.classlib.impl.tz.DateTimeZoneProviderIntrinsic;
 import org.teavm.classlib.impl.tz.DateTimeZoneProviderPatch;
@@ -83,12 +90,22 @@ public class JCLPlugin implements TeaVMPlugin {
             if (cHost != null) {
                 cHost.addGenerator(new ServiceLoaderCSupport());
             }
+
+            var wasmHost = host.getExtension(TeaVMWasmHost.class);
+            if (wasmHost != null) {
+                wasmHost.add(new ServiceLoaderWasmSupport());
+            }
+
+            var wasmGCHost = host.getExtension(TeaVMWasmGCHost.class);
+            if (wasmGCHost != null) {
+                wasmGCHost.addGeneratorFactory(new ServiceLoaderWasmGCSupport());
+            }
         }
 
         if (!isBootstrap()) {
             host.registerService(CLDRReader.class, CLDRReader.getInstance(host.getProperties(), host.getClassLoader()));
 
-            host.add(new ClassForNameTransformer());
+            host.add(new ReflectionTransformer());
         }
 
         host.add(new AnnotationDependencyListener());
@@ -104,6 +121,13 @@ public class JCLPlugin implements TeaVMPlugin {
                 ValueType.object("java.lang.String"), ValueType.object("java.lang.invoke.MethodType"),
                 ValueType.arrayOf(ValueType.object("java.lang.Object")),
                 ValueType.object("java.lang.invoke.CallSite")), lms);
+        host.add(new MethodReference("java.lang.runtime.ObjectMethods", "bootstrap",
+                ValueType.object("java.lang.invoke.MethodHandles$Lookup"), ValueType.object("java.lang.String"),
+                ValueType.object("java.lang.invoke.TypeDescriptor"), ValueType.object("java.lang.Class"),
+                ValueType.object("java.lang.String"),
+                ValueType.arrayOf(ValueType.object("java.lang.invoke.MethodHandle")),
+                ValueType.object("java.lang.Object")),
+                new ObjectMethodsSubstitutor());
 
         StringConcatFactorySubstitutor stringConcatSubstitutor = new StringConcatFactorySubstitutor();
         host.add(new MethodReference("java.lang.invoke.StringConcatFactory", "makeConcat",
@@ -116,6 +140,22 @@ public class JCLPlugin implements TeaVMPlugin {
                         ValueType.arrayOf(ValueType.object("java.lang.Object")),
                         ValueType.object("java.lang.invoke.CallSite")),
                 stringConcatSubstitutor);
+
+        SwitchBootstrapSubstitutor switchBootstrapSubstitutor = new SwitchBootstrapSubstitutor();
+        host.add(new MethodReference("java.lang.runtime.SwitchBootstraps", "typeSwitch",
+                        ValueType.object("java.lang.invoke.MethodHandles$Lookup"),
+                        ValueType.object("java.lang.String"),
+                        ValueType.object("java.lang.invoke.MethodType"),
+                        ValueType.arrayOf(ValueType.object("java.lang.Object")),
+                        ValueType.object("java.lang.invoke.CallSite")),
+                switchBootstrapSubstitutor);
+        host.add(new MethodReference("java.lang.runtime.SwitchBootstraps", "enumSwitch",
+                        ValueType.object("java.lang.invoke.MethodHandles$Lookup"),
+                        ValueType.object("java.lang.String"),
+                        ValueType.object("java.lang.invoke.MethodType"),
+                        ValueType.arrayOf(ValueType.object("java.lang.Object")),
+                        ValueType.object("java.lang.invoke.CallSite")),
+                switchBootstrapSubstitutor);
 
         if (!isBootstrap()) {
             host.add(new ScalaHacks());
@@ -156,6 +196,16 @@ public class JCLPlugin implements TeaVMPlugin {
         installMetadata(host.getService(MetadataRegistration.class));
         host.add(new DeclaringClassDependencyListener());
         applyTimeZoneDetection(host);
+
+        var js = host.getExtension(TeaVMJavaScriptHost.class);
+        if (js != null) {
+            host.add(new JSStringTransformer());
+            js.addInjectorProvider(new JSStringInjector());
+            js.add(new MethodReference(String.class, "<init>", Object.class, void.class),
+                    new JSStringConstructorGenerator());
+        } else {
+            host.add(new DefaultStringTransformer());
+        }
     }
 
     private void applyTimeZoneDetection(TeaVMHost host) {
@@ -228,6 +278,10 @@ public class JCLPlugin implements TeaVMPlugin {
         reg.register(new MethodReference(Character.class, "obtainClasses", StringResource.class),
                 new CharacterMetadataGenerator());
         reg.register(new MethodReference(Character.class, "acquireTitleCaseMapping", StringResource.class),
+                new CharacterMetadataGenerator());
+        reg.register(new MethodReference(Character.class, "acquireUpperCaseMapping", StringResource.class),
+                new CharacterMetadataGenerator());
+        reg.register(new MethodReference(Character.class, "acquireLowerCaseMapping", StringResource.class),
                 new CharacterMetadataGenerator());
     }
 

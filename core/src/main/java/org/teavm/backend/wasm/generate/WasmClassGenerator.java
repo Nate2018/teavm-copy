@@ -24,13 +24,18 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
-import org.teavm.backend.lowlevel.generate.NameProvider;
+import org.teavm.backend.wasm.WasmFunctionRepository;
 import org.teavm.backend.wasm.binary.BinaryWriter;
 import org.teavm.backend.wasm.binary.DataArray;
 import org.teavm.backend.wasm.binary.DataPrimitives;
 import org.teavm.backend.wasm.binary.DataStructure;
 import org.teavm.backend.wasm.binary.DataType;
 import org.teavm.backend.wasm.binary.DataValue;
+import org.teavm.backend.wasm.debug.DebugClassLayout;
+import org.teavm.backend.wasm.debug.info.FieldType;
+import org.teavm.backend.wasm.model.WasmFunction;
+import org.teavm.backend.wasm.model.WasmModule;
+import org.teavm.backend.wasm.render.WasmBinaryStatsCollector;
 import org.teavm.common.IntegerArray;
 import org.teavm.interop.Address;
 import org.teavm.interop.Function;
@@ -49,17 +54,21 @@ import org.teavm.model.classes.TagRegistry;
 import org.teavm.model.classes.VirtualTable;
 import org.teavm.model.classes.VirtualTableEntry;
 import org.teavm.model.classes.VirtualTableProvider;
+import org.teavm.model.lowlevel.Characteristics;
+import org.teavm.model.util.ReflectionUtil;
 import org.teavm.runtime.RuntimeClass;
 import org.teavm.runtime.RuntimeObject;
 
 public class WasmClassGenerator {
     private ClassReaderSource processedClassSource;
     private ClassReaderSource classSource;
-    public final NameProvider names;
+    private Characteristics characteristics;
+    public final WasmFunctionRepository functions;
+    public final WasmModule module;
     private Map<ValueType, ClassBinaryData> binaryDataMap = new LinkedHashMap<>();
     private BinaryWriter binaryWriter;
-    private Map<MethodReference, Integer> functions = new HashMap<>();
-    private List<String> functionTable = new ArrayList<>();
+    private Map<MethodReference, Integer> tableFunctions = new HashMap<>();
+    private ObjectIntMap<WasmFunction> functionIdMap = new ObjectIntHashMap<>();
     private VirtualTableProvider vtableProvider;
     private TagRegistry tagRegistry;
     private WasmStringPool stringPool;
@@ -95,6 +104,8 @@ public class WasmClassGenerator {
     private int classCount;
     private ClassMetadataRequirements metadataRequirements;
     private ClassInitializerInfo classInitializerInfo;
+    private DwarfClassGenerator dwarfClassGenerator;
+    private WasmBinaryStatsCollector statsCollector;
 
     private static final int CLASS_SIZE = 1;
     private static final int CLASS_FLAGS = 2;
@@ -114,17 +125,22 @@ public class WasmClassGenerator {
 
     public WasmClassGenerator(ClassReaderSource processedClassSource, ClassReaderSource classSource,
             VirtualTableProvider vtableProvider, TagRegistry tagRegistry, BinaryWriter binaryWriter,
-            NameProvider names, ClassMetadataRequirements metadataRequirements,
-            ClassInitializerInfo classInitializerInfo) {
+            WasmFunctionRepository functions, WasmModule module, ClassMetadataRequirements metadataRequirements,
+            ClassInitializerInfo classInitializerInfo, Characteristics characteristics,
+            DwarfClassGenerator dwarfClassGenerator, WasmBinaryStatsCollector statsCollector) {
         this.processedClassSource = processedClassSource;
         this.classSource = classSource;
         this.vtableProvider = vtableProvider;
         this.tagRegistry = tagRegistry;
         this.binaryWriter = binaryWriter;
-        this.stringPool = new WasmStringPool(this, binaryWriter);
-        this.names = names;
+        this.functions = functions;
+        this.module = module;
+        this.stringPool = new WasmStringPool(this, binaryWriter, statsCollector);
         this.metadataRequirements = metadataRequirements;
         this.classInitializerInfo = classInitializerInfo;
+        this.characteristics = characteristics;
+        this.dwarfClassGenerator = dwarfClassGenerator;
+        this.statsCollector = statsCollector;
     }
 
     public WasmStringPool getStringPool() {
@@ -161,19 +177,36 @@ public class WasmClassGenerator {
                     break;
             }
 
-            binaryData.data = createPrimitiveClassData(size, type);
+            binaryData.data = classStructure.createValue();
+            createPrimitiveClassData(binaryData.data, size, type);
             binaryData.start = binaryWriter.append(binaryData.data);
         } else if (type == ValueType.VOID) {
-            binaryData.data = createPrimitiveClassData(0, type);
+            binaryData.data = classStructure.createValue();
+            createPrimitiveClassData(binaryData.data, 0, type);
             binaryData.start = binaryWriter.append(binaryData.data);
         } else if (type instanceof ValueType.Object) {
             String className = ((ValueType.Object) type).getClassName();
-            ClassReader cls = classSource.get(className);
+            var cls = classSource.get(className);
 
             if (cls != null) {
-                calculateLayout(cls, binaryData);
+                DwarfClassGenerator.ClassType dwarfClass;
+                if (dwarfClassGenerator != null) {
+                    dwarfClass = dwarfClassGenerator.getClass(className);
+                    dwarfClass.setSuperclass(cls.getParent() != null
+                            ? dwarfClassGenerator.getClass(cls.getParent())
+                            : null);
+                } else {
+                    dwarfClass = null;
+                }
+                calculateLayout(cls, binaryData, dwarfClass);
                 if (binaryData.start >= 0) {
                     binaryData.start = binaryWriter.append(createStructure(binaryData));
+                    var size = binaryWriter.getAddress() - binaryData.start;
+                    statsCollector.addClassMetadataSize(className, size);
+                }
+                if (dwarfClass != null) {
+                    dwarfClass.setSize(binaryData.size);
+                    dwarfClass.setPointer(binaryData.start);
                 }
             }
         } else if (type instanceof ValueType.Array) {
@@ -194,9 +227,8 @@ public class WasmClassGenerator {
             binaryData.data = wrapper.getValue(0);
             binaryData.data.setInt(CLASS_SIZE, 4);
             binaryData.data.setAddress(CLASS_ITEM_TYPE, itemBinaryData.start);
-            binaryData.data.setInt(CLASS_IS_INSTANCE, functionTable.size());
+            binaryData.data.setInt(CLASS_IS_INSTANCE, getFunctionPointer(functions.forSupertype(type)));
             binaryData.data.setInt(CLASS_CANARY, RuntimeClass.computeCanary(4, 0));
-            functionTable.add(names.forSupertypeFunction(type));
             binaryData.data.setAddress(CLASS_NAME, stringPool.getStringPointer(type.toString().replace('/', '.')));
             binaryData.data.setAddress(CLASS_SIMPLE_NAME, 0);
             binaryData.data.setInt(CLASS_INIT, -1);
@@ -207,47 +239,19 @@ public class WasmClassGenerator {
         }
     }
 
-    private DataValue createPrimitiveClassData(int size, ValueType type) {
-        DataValue value = classStructure.createValue();
+    private DataValue createPrimitiveClassData(DataValue value, int size, ValueType type) {
         value.setInt(CLASS_SIZE, size);
         value.setInt(CLASS_FLAGS, RuntimeClass.PRIMITIVE);
-        value.setInt(CLASS_IS_INSTANCE, functionTable.size());
+        value.setInt(CLASS_IS_INSTANCE, getFunctionPointer(functions.forSupertype(type)));
         value.setAddress(CLASS_SIMPLE_NAME, 0);
         value.setInt(CLASS_INIT, -1);
-        functionTable.add(names.forSupertypeFunction(type));
+        value.setInt(CLASS_TAG, Integer.MAX_VALUE);
 
         String name;
         if (type == ValueType.VOID) {
             name = "void";
         } else {
-            switch (((ValueType.Primitive) type).getKind()) {
-                case BOOLEAN:
-                    name = "boolean";
-                    break;
-                case BYTE:
-                    name = "byte";
-                    break;
-                case SHORT:
-                    name = "short";
-                    break;
-                case CHARACTER:
-                    name = "char";
-                    break;
-                case INTEGER:
-                    name = "int";
-                    break;
-                case LONG:
-                    name = "long";
-                    break;
-                case FLOAT:
-                    name = "float";
-                    break;
-                case DOUBLE:
-                    name = "double";
-                    break;
-                default:
-                    name = "";
-            }
+            name = ReflectionUtil.typeName(((ValueType.Primitive) type).getKind());
         }
 
         value.setAddress(CLASS_NAME, stringPool.getStringPointer(name));
@@ -255,8 +259,14 @@ public class WasmClassGenerator {
         return value;
     }
 
-    public List<String> getFunctionTable() {
-        return functionTable;
+    public int getFunctionPointer(WasmFunction function) {
+        var result = functionIdMap.getOrDefault(function, -1);
+        if (result < 0) {
+            result = module.getFunctionTable().size();
+            module.getFunctionTable().add(function);
+            functionIdMap.put(function, result);
+        }
+        return result;
     }
 
     private DataValue createStructure(ClassBinaryData binaryData) {
@@ -289,8 +299,7 @@ public class WasmClassGenerator {
         header.setInt(CLASS_CANARY, RuntimeClass.computeCanary(occupiedSize, tag));
         int nameAddress = requirements.name() ? stringPool.getStringPointer(name) : 0;
         header.setAddress(CLASS_NAME, nameAddress);
-        header.setInt(CLASS_IS_INSTANCE, functionTable.size());
-        functionTable.add(names.forSupertypeFunction(ValueType.object(name)));
+        header.setInt(CLASS_IS_INSTANCE, getFunctionPointer(functions.forSupertype(ValueType.object(name))));
         header.setAddress(CLASS_PARENT, parentPtr);
 
         ClassReader cls = processedClassSource.get(name);
@@ -345,8 +354,7 @@ public class WasmClassGenerator {
         if (cls != null && binaryData.start >= 0
                 && cls.getMethod(new MethodDescriptor("<clinit>", ValueType.VOID)) != null
                 && classInitializerInfo.isDynamicInitializer(name)) {
-            header.setInt(CLASS_INIT, functionTable.size());
-            functionTable.add(names.forClassInitializer(name));
+            header.setInt(CLASS_INIT, getFunctionPointer(functions.forClassInitializer(name)));
         } else {
             header.setInt(CLASS_INIT, -1);
         }
@@ -395,26 +403,18 @@ public class WasmClassGenerator {
         if (type instanceof ValueType.Primitive) {
             return false;
         } else if (type instanceof ValueType.Object) {
-            ClassReader cls = classSource.get(((ValueType.Object) type).getClassName());
-            if (cls == null) {
-                return true;
-            }
-            if (cls.getName().equals(Address.class.getName())) {
-                return false;
-            }
-            while (cls != null) {
-                if (cls.getName().equals(Structure.class.getName()) || cls.getName().equals(Function.class.getName())) {
-                    return false;
-                }
-                if (cls.getParent() == null) {
-                    return true;
-                }
-                cls = classSource.get(cls.getParent());
-            }
-            return true;
+            var className = ((ValueType.Object) type).getClassName();
+            return isManagedClass(className);
         } else {
             return true;
         }
+    }
+
+    private boolean isManagedClass(String className) {
+        return !characteristics.isStructure(className)
+                && !characteristics.isFunction(className)
+                && !characteristics.isResource(className)
+                && !className.equals(Address.class.getName());
     }
 
     private void fillVirtualTable(VirtualTable vtable, DataValue array) {
@@ -431,11 +431,8 @@ public class WasmClassGenerator {
                 if (method != null) {
                     VirtualTableEntry entry = vtable.getEntry(method);
                     if (entry != null) {
-                        methodIndex = functions.computeIfAbsent(entry.getImplementor(), implementor -> {
-                            int result = functionTable.size();
-                            functionTable.add(names.forMethod(implementor));
-                            return result;
-                        });
+                        methodIndex = tableFunctions.computeIfAbsent(entry.getImplementor(),
+                                implementor -> getFunctionPointer(functions.forInstanceMethod(implementor)));
                     }
                 }
 
@@ -488,7 +485,7 @@ public class WasmClassGenerator {
         return binaryDataMap.get(type).function;
     }
 
-    private void calculateLayout(ClassReader cls, ClassBinaryData data) {
+    private void calculateLayout(ClassReader cls, ClassBinaryData data, DwarfClassGenerator.ClassType dwarfClass) {
         if (cls.getName().equals(Structure.class.getName()) || cls.getName().equals(Address.class.getName())) {
             data.size = 0;
             data.start = -1;
@@ -526,11 +523,20 @@ public class WasmClassGenerator {
                 if (field.getInitialValue() != null) {
                     setInitialValue(field.getType(), value, field.getInitialValue());
                 }
-                data.fieldLayout.put(field.getName(), binaryWriter.append(value));
+                var address = binaryWriter.append(value);
+                data.fieldLayout.put(field.getName(), address);
+                if (dwarfClass != null) {
+                    dwarfClass.registerStaticField(field.getName(), field.getType(), address);
+                    dwarfClassGenerator.getTypePtr(field.getType());
+                }
             } else {
                 int offset = align(data.size, desiredAlignment);
                 data.fieldLayout.put(field.getName(), offset);
                 data.size = offset + desiredAlignment;
+                if (dwarfClass != null) {
+                    dwarfClass.registerField(field.getName(), field.getType(), offset);
+                    dwarfClassGenerator.getTypePtr(field.getType());
+                }
             }
             if (data.alignment == 0) {
                 data.alignment = desiredAlignment;
@@ -683,6 +689,113 @@ public class WasmClassGenerator {
             return false;
         }
         return cls.getMethod(new MethodDescriptor("<clinit>", ValueType.VOID)) != null;
+    }
+
+    public void writeDebug(DebugClassLayout debug) {
+        var list = new ArrayList<>(binaryDataMap.values());
+        var indexes = new ObjectIntHashMap<ValueType>();
+        for (var i = 0; i < list.size(); ++i) {
+            indexes.put(list.get(i).type, i);
+        }
+        for (var i = 0; i < list.size(); ++i) {
+            var data = list.get(i);
+            if (data.type instanceof ValueType.Primitive) {
+                debug.writePrimitive(((ValueType.Primitive) data.type).getKind(), data.start);
+            } else if (data.type instanceof ValueType.Array) {
+                var itemType = ((ValueType.Array) data.type).getItemType();
+                debug.writeArray(indexes.get(itemType), data.start);
+            } else if (data.type instanceof ValueType.Object) {
+                var className = ((ValueType.Object) data.type).getClassName();
+                if (className.equals("java.lang.Class")) {
+                    debug.startClass(className, indexes.get(ValueType.object("java.lang.Object")), data.start, 60);
+                    debug.instanceField("size", 8, FieldType.INT);
+                    debug.instanceField("flags", 12, FieldType.INT);
+                    debug.instanceField("name", 24, FieldType.OBJECT);
+                    debug.instanceField("itemType", 32, FieldType.OBJECT);
+                    debug.instanceField("parent", 56, FieldType.OBJECT);
+                    debug.endClass();
+                } else if (isManagedClass(className)) {
+                    var parent = data.cls != null && data.cls.getParent() != null
+                            ? indexes.get(ValueType.object(data.cls.getParent()))
+                            : -1;
+                    if (data.isInferface) {
+                        debug.writeInterface(className, data.start);
+                    } else {
+                        debug.startClass(className, parent, data.start, data.size);
+                        var fields = getFieldsWithOffset(data);
+                        for (var entry : fields) {
+                            if (entry.field.hasModifier(ElementModifier.STATIC)) {
+                                debug.staticField(entry.field.getName(), entry.offset,
+                                        asDebugType(entry.field.getType()));
+                            }
+                        }
+                        for (var entry : fields) {
+                            if (!entry.field.hasModifier(ElementModifier.STATIC)) {
+                                debug.instanceField(entry.field.getName(), entry.offset,
+                                        asDebugType(entry.field.getType()));
+                            }
+                        }
+                        debug.endClass();
+                    }
+                } else {
+                    debug.writeUnknown(data.start);
+                }
+            } else {
+                debug.writeUnknown(data.start);
+            }
+        }
+    }
+
+    private List<FieldWithOffset> getFieldsWithOffset(ClassBinaryData data) {
+        var result = new ArrayList<FieldWithOffset>();
+        for (var field : data.fieldLayout) {
+            var fieldReader = data.cls.getField(field.key);
+            result.add(new FieldWithOffset(fieldReader, field.value));
+        }
+        return result;
+    }
+
+    private static class FieldWithOffset {
+        private FieldReader field;
+        private int offset;
+
+        FieldWithOffset(FieldReader field, int offset) {
+            this.field = field;
+            this.offset = offset;
+        }
+    }
+
+    private FieldType asDebugType(ValueType type) {
+        if (type instanceof ValueType.Primitive) {
+            switch (((ValueType.Primitive) type).getKind()) {
+                case BOOLEAN:
+                    return FieldType.BOOLEAN;
+                case BYTE:
+                    return FieldType.BYTE;
+                case SHORT:
+                    return FieldType.SHORT;
+                case CHARACTER:
+                    return FieldType.CHAR;
+                case INTEGER:
+                    return FieldType.INT;
+                case LONG:
+                    return FieldType.LONG;
+                case FLOAT:
+                    return FieldType.FLOAT;
+                case DOUBLE:
+                    return FieldType.DOUBLE;
+                default:
+                    return FieldType.UNDEFINED;
+            }
+        } else if (type instanceof ValueType.Object) {
+            if (isManagedClass(((ValueType.Object) type).getClassName())) {
+                return FieldType.OBJECT;
+            } else {
+                return FieldType.ADDRESS;
+            }
+        } else {
+            return FieldType.OBJECT;
+        }
     }
 
     static class ClassBinaryData {

@@ -27,10 +27,8 @@ import java.nio.ReadOnlyBufferException;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.teavm.junit.TeaVMTestRunner;
-import org.teavm.junit.WholeClassCompilation;
 
 @RunWith(TeaVMTestRunner.class)
-@WholeClassCompilation
 public class LongBufferTest {
     @Test
     public void allocatesSimple() {
@@ -371,5 +369,12 @@ public class LongBufferTest {
         buffer.position(2);
         buffer.reset();
         assertThat(buffer.position(), is(1));
+    }
+
+    @Test
+    public void putEmptyArray() {
+        LongBuffer lb = LongBuffer.allocate(0);
+        lb.put(new long[0]);
+        lb.get(new long[0]);
     }
 }

@@ -32,7 +32,8 @@ class TByteBufferImpl extends TByteBuffer {
 
     @Override
     public TByteBuffer slice() {
-        return new TByteBufferImpl(position, limit - position,  array, 0, limit - position, direct, readOnly);
+        return new TByteBufferImpl(position + start, limit - position,  array, 0, limit - position,
+                direct, readOnly);
     }
 
     @Override
@@ -352,6 +353,46 @@ class TByteBufferImpl extends TByteBuffer {
     }
 
     @Override
+    public float getFloat() {
+        return Float.intBitsToFloat(getInt());
+    }
+
+    @Override
+    public TByteBuffer putFloat(float value) {
+        return putInt(Float.floatToRawIntBits(value));
+    }
+
+    @Override
+    public TByteBuffer putFloat(int index, float value) {
+        return putInt(index, Float.floatToRawIntBits(value));
+    }
+
+    @Override
+    public float getFloat(int index) {
+        return Float.intBitsToFloat(getInt(index));
+    }
+
+    @Override
+    public double getDouble() {
+        return Double.longBitsToDouble(getLong());
+    }
+
+    @Override
+    public TByteBuffer putDouble(double value) {
+        return putLong(Double.doubleToRawLongBits(value));
+    }
+
+    @Override
+    public double getDouble(int index) {
+        return Double.longBitsToDouble(getLong(index));
+    }
+
+    @Override
+    public TByteBuffer putDouble(int index, double value) {
+        return putLong(index, Double.doubleToRawLongBits(value));
+    }
+
+    @Override
     public long getLong() {
         if (position + 7 >= limit) {
             throw new TBufferUnderflowException();
@@ -445,10 +486,10 @@ class TByteBufferImpl extends TByteBuffer {
             array[start + index + 1] = (byte) (value >> 8);
             array[start + index + 2] = (byte) (value >> 16);
             array[start + index + 3] = (byte) (value >> 24);
-            array[start + index + 4] = (byte) (value >> 24);
-            array[start + index + 5] = (byte) (value >> 24);
-            array[start + index + 6] = (byte) (value >> 24);
-            array[start + index + 7] = (byte) (value >> 24);
+            array[start + index + 4] = (byte) (value >> 32);
+            array[start + index + 5] = (byte) (value >> 40);
+            array[start + index + 6] = (byte) (value >> 48);
+            array[start + index + 7] = (byte) (value >> 56);
         }
         return this;
     }

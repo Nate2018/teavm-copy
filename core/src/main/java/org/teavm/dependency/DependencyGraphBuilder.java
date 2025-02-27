@@ -22,6 +22,7 @@ import static org.teavm.dependency.AbstractInstructionAnalyzer.MONITOR_EXIT_SYNC
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import org.teavm.model.AccessLevel;
 import org.teavm.model.BasicBlockReader;
 import org.teavm.model.CallLocation;
 import org.teavm.model.ClassHierarchy;
@@ -31,6 +32,7 @@ import org.teavm.model.ElementModifier;
 import org.teavm.model.IncomingReader;
 import org.teavm.model.MethodDescriptor;
 import org.teavm.model.MethodHolder;
+import org.teavm.model.MethodReader;
 import org.teavm.model.MethodReference;
 import org.teavm.model.PhiReader;
 import org.teavm.model.Program;
@@ -219,8 +221,11 @@ class DependencyGraphBuilder {
         }
 
         @Override
-        public void cast(VariableReader receiver, VariableReader value, ValueType targetType) {
-            super.cast(receiver, value, targetType);
+        public void cast(VariableReader receiver, VariableReader value, ValueType targetType, boolean weak) {
+            super.cast(receiver, value, targetType, weak);
+            if (!weak) {
+                currentExceptionConsumer.consume(dependencyAnalyzer.getType("java.lang.ClassCastException"));
+            }
             DependencyNode valueNode = nodes[value.getIndex()];
             DependencyNode receiverNode = nodes[receiver.getIndex()];
             ClassReaderSource classSource = dependencyAnalyzer.getClassSource();
@@ -368,6 +373,15 @@ class DependencyGraphBuilder {
         @Override
         protected void invokeVirtual(VariableReader receiver, VariableReader instance, MethodReference method,
                 List<? extends VariableReader> arguments) {
+            ClassReader cls = dependencyAnalyzer.getClassSource().get(method.getClassName());
+            if (cls != null) {
+                MethodReader methodHolder = cls.getMethod(method.getDescriptor());
+                if (methodHolder != null && methodHolder.getLevel() == AccessLevel.PRIVATE) {
+                    invokeSpecial(receiver, instance, method, arguments);
+                    return;
+                }
+            }
+
             if (handleSpecialMethod(receiver, instance, method)) {
                 return;
             }
@@ -377,7 +391,7 @@ class DependencyGraphBuilder {
                 actualArgs[i + 1] = nodes[arguments.get(i).getIndex()];
             }
             actualArgs[0] = getNode(instance);
-            DependencyConsumer listener = new VirtualCallConsumer(getNode(instance),
+            DependencyConsumer listener = new VirtualCallConsumer(
                     method.getClassName(), method.getDescriptor(), dependencyAnalyzer, actualArgs,
                     receiver != null ? getNode(receiver) : null, getCallLocation(),
                     currentExceptionConsumer);
@@ -463,7 +477,8 @@ class DependencyGraphBuilder {
                 if (cls != null && cls.getParent() != null) {
                     receiverNode.getClassValueNode().propagate(dependencyAnalyzer.getType(cls.getParent()));
                 }
-                methodDep.getVariable(0).propagate(type);
+                methodDep.getVariable(0).getClassValueNode().propagate(type);
+                methodDep.getVariable(0).propagate(dependencyAnalyzer.getType("java.lang.Class"));
             });
         }
 
@@ -474,8 +489,9 @@ class DependencyGraphBuilder {
 
             DependencyNode instanceNode = getNode(instance);
             DependencyNode receiverNode = getNode(receiver);
-            receiverNode.propagate(dependencyAnalyzer.classType);
-            instanceNode.getClassValueNode().addConsumer(type -> {
+            receiverNode.propagate(dependencyAnalyzer.getType("[java/lang/Class;"));
+            receiverNode.getArrayItem().propagate(dependencyAnalyzer.classType);
+            instanceNode.getArrayItem().getClassValueNode().addConsumer(type -> {
                 String className = type.getName();
                 if (className.startsWith("[")) {
                     return;

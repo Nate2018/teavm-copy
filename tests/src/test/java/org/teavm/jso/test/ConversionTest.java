@@ -26,11 +26,17 @@ import org.teavm.jso.JSByRef;
 import org.teavm.jso.JSObject;
 import org.teavm.jso.JSProperty;
 import org.teavm.jso.core.JSString;
+import org.teavm.junit.EachTestCompiledSeparately;
+import org.teavm.junit.OnlyPlatform;
 import org.teavm.junit.SkipJVM;
+import org.teavm.junit.SkipPlatform;
 import org.teavm.junit.TeaVMTestRunner;
+import org.teavm.junit.TestPlatform;
 
 @RunWith(TeaVMTestRunner.class)
 @SkipJVM
+@OnlyPlatform({TestPlatform.JAVASCRIPT, TestPlatform.WEBASSEMBLY_GC})
+@EachTestCompiledSeparately
 public class ConversionTest {
     @Test
     public void convertsPrimitivesToJavaScript() {
@@ -147,6 +153,7 @@ public class ConversionTest {
     }
 
     @Test
+    @SkipPlatform(TestPlatform.WEBASSEMBLY_GC)
     public void passesArrayByRef() {
         int[] array = { 23, 42 };
 
@@ -160,6 +167,7 @@ public class ConversionTest {
     }
 
     @Test
+    @SkipPlatform(TestPlatform.WEBASSEMBLY_GC)
     public void returnsArrayByRef() {
         int[] first = { 23, 42 };
         int[] second = rewrap(first);

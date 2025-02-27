@@ -18,11 +18,18 @@ package org.teavm.classlib.java.lang.reflect;
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import java.lang.reflect.Array;
+import java.util.ArrayList;
+import java.util.List;
+import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.runner.RunWith;
+import org.teavm.junit.EachTestCompiledSeparately;
+import org.teavm.junit.SkipPlatform;
 import org.teavm.junit.TeaVMTestRunner;
+import org.teavm.junit.TestPlatform;
 
 @RunWith(TeaVMTestRunner.class)
+@EachTestCompiledSeparately
 public class ArrayTest {
     @Test
     public void createsNewInstance() {
@@ -39,6 +46,25 @@ public class ArrayTest {
     }
 
     @Test
+    @Ignore
+    public void getWorks() {
+        var intArray = new int[] { 23, 42 };
+        var stringArray = new String[] { "asd", "qwe" };
+        var list = new ArrayList<>();
+        copyToList(list, intArray);
+        copyToList(list, stringArray);
+        assertEquals(List.of(23, 42, "asd", "qwe"), list);
+    }
+
+    private void copyToList(List<Object> target, Object array) {
+        var length = Array.getLength(array);
+        for (var i = 0; i < length; ++i) {
+            target.add(Array.get(array, i));
+        }
+    }
+
+    @Test
+    @SkipPlatform({TestPlatform.C, TestPlatform.WEBASSEMBLY, TestPlatform.WASI, TestPlatform.WEBASSEMBLY_GC})
     public void setWorks() {
         Object array = Array.newInstance(String.class, 2);
         Array.set(array, 0, "foo");
@@ -47,6 +73,7 @@ public class ArrayTest {
     }
 
     @Test
+    @SkipPlatform({TestPlatform.C, TestPlatform.WEBASSEMBLY, TestPlatform.WASI, TestPlatform.WEBASSEMBLY_GC})
     public void setPrimitiveWorks() {
         Object array = Array.newInstance(int.class, 2);
         Array.set(array, 0, 23);

@@ -43,7 +43,7 @@ import org.teavm.model.TextLocation;
 import org.teavm.model.ValueType;
 import org.teavm.model.emit.ProgramEmitter;
 import org.teavm.model.emit.ValueEmitter;
-import org.teavm.model.instructions.InvocationType;
+import org.teavm.model.util.InvokeDynamicUtil;
 
 public class LambdaMetafactorySubstitutor implements BootstrapMethodSubstitutor {
     private static final int FLAG_SERIALIZABLE = 1;
@@ -114,7 +114,7 @@ public class LambdaMetafactorySubstitutor implements BootstrapMethodSubstitutor 
                     implementorSignature[i + capturedVarCount]);
         }
 
-        ValueEmitter result = invoke(pe, implMethod, passedArguments);
+        ValueEmitter result = InvokeDynamicUtil.invoke(pe, implMethod, passedArguments);
         ValueType expectedResult = instantiatedMethodType[instantiatedMethodType.length - 1];
         if (result != null && expectedResult != ValueType.VOID) {
             ValueType actualResult = implementorSignature[implementorSignature.length - 1];
@@ -179,43 +179,6 @@ public class LambdaMetafactorySubstitutor implements BootstrapMethodSubstitutor 
         return callerPe.construct(ctor.getOwnerName(), callSite.getArguments().toArray(new ValueEmitter[0]));
     }
 
-    private ValueEmitter invoke(ProgramEmitter pe, MethodHandle handle, ValueEmitter[] arguments) {
-        switch (handle.getKind()) {
-            case GET_FIELD:
-                return arguments[0].getField(handle.getName(), handle.getValueType());
-            case GET_STATIC_FIELD:
-                return pe.getField(handle.getClassName(), handle.getName(), handle.getValueType());
-            case PUT_FIELD:
-                arguments[0].setField(handle.getName(), arguments[0].cast(handle.getValueType()));
-                return null;
-            case PUT_STATIC_FIELD:
-                pe.setField(handle.getClassName(), handle.getName(), arguments[0].cast(handle.getValueType()));
-                return null;
-            case INVOKE_VIRTUAL:
-            case INVOKE_INTERFACE:
-            case INVOKE_SPECIAL: {
-                for (int i = 1; i < arguments.length; ++i) {
-                    arguments[i] = arguments[i].cast(handle.getArgumentType(i - 1));
-                }
-                arguments[0] = arguments[0].cast(ValueType.object(handle.getClassName()));
-                InvocationType type = handle.getKind() == MethodHandleType.INVOKE_SPECIAL
-                        ? InvocationType.SPECIAL
-                        : InvocationType.VIRTUAL;
-                return arguments[0].invoke(type, handle.getName(), handle.getValueType(),
-                        Arrays.copyOfRange(arguments, 1, arguments.length));
-            }
-            case INVOKE_STATIC:
-                for (int i = 0; i < arguments.length; ++i) {
-                    arguments[i] = arguments[i].cast(handle.getArgumentType(i));
-                }
-                return pe.invoke(handle.getClassName(), handle.getName(), handle.getValueType(), arguments);
-            case INVOKE_CONSTRUCTOR:
-                return pe.construct(handle.getClassName(), arguments);
-            default:
-                throw new IllegalArgumentException("Unexpected handle type: " + handle.getKind());
-        }
-    }
-
     private ValueEmitter tryConvertArgument(ValueEmitter arg, ValueType from, ValueType to) {
         if (from.equals(to)) {
             return arg;
@@ -225,19 +188,35 @@ public class LambdaMetafactorySubstitutor implements BootstrapMethodSubstitutor 
         } else if (from instanceof ValueType.Primitive && to instanceof ValueType.Object) {
             String primitiveClass = ((ValueType.Object) to).getClassName();
             PrimitiveType toType = getWrappedPrimitive(primitiveClass);
+            var fromType = (ValueType.Primitive) from;
             if (toType == null) {
-                return arg;
+                return arg.getProgramEmitter().invoke(fromType.getBoxedType().getClassName(), "valueOf",
+                        fromType.getBoxedType(), arg);
             }
             arg = tryConvertArgument(arg, from, ValueType.primitive(toType));
             return arg.getProgramEmitter().invoke(primitiveClass, "valueOf", to, arg);
         } else if (from instanceof ValueType.Object && to instanceof ValueType.Primitive) {
-            String primitiveClass = ((ValueType.Object) from).getClassName();
-            PrimitiveType fromType = getWrappedPrimitive(primitiveClass);
-            if (fromType == null) {
-                return arg;
+            var fromClass = ((ValueType.Object) from).getClassName();
+            var primitiveType = (ValueType.Primitive) to;
+            if (fromClass.equals("java.lang.Object")) {
+                switch (primitiveType.getKind()) {
+                    case BYTE:
+                    case SHORT:
+                    case INTEGER:
+                    case LONG:
+                    case FLOAT:
+                    case DOUBLE:
+                        arg = arg.cast(ValueType.object("java.lang.Number"));
+                        break;
+                    case BOOLEAN:
+                        arg = arg.cast(ValueType.object("java.lang.Boolean"));
+                        break;
+                    case CHARACTER:
+                        arg = arg.cast(ValueType.object("java.lang.Character"));
+                        break;
+                }
             }
-            arg = arg.invokeVirtual(primitiveName(fromType) + "Value", ValueType.primitive(fromType));
-            return tryConvertArgument(arg, ValueType.primitive(fromType), to);
+            return arg.invokeVirtual(primitiveName(primitiveType.getKind()) + "Value", primitiveType);
         } else {
             return arg.cast(to);
         }

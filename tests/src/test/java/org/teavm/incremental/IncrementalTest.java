@@ -40,7 +40,6 @@ import org.mozilla.javascript.ScriptRuntime;
 import org.mozilla.javascript.Scriptable;
 import org.mozilla.javascript.ScriptableObject;
 import org.mozilla.javascript.Undefined;
-import org.mozilla.javascript.typedarrays.NativeUint16Array;
 import org.teavm.ast.AsyncMethodNode;
 import org.teavm.backend.javascript.JavaScriptTarget;
 import org.teavm.cache.AlwaysStaleCacheStatus;
@@ -164,16 +163,12 @@ public class IncrementalTest {
     private String runScript(String script, String fileName) {
         Scriptable scope = new NativeObject();
         scope.setParentScope(rhinoRootScope);
+        scope.setPrototype(rhinoRootScope);
         rhinoContext.evaluateString(scope, script, fileName, 1, null);
         Function main = (Function) scope.get("main", scope);
         ScriptRuntime.doTopCall(main, rhinoContext, scope, scope,
                 new Object[] { new NativeArray(0), Undefined.instance });
-        NativeUint16Array jsChars = (NativeUint16Array) main.get("result", main);
-        char[] chars = new char[jsChars.getArrayLength()];
-        for (int i = 0; i < chars.length; ++i) {
-            chars[i] = (char) jsChars.get(i).intValue();
-        }
-        return new String(chars);
+        return main.get("result", main).toString();
     }
 
     private static String getSimpleName(String name) {
@@ -209,7 +204,7 @@ public class IncrementalTest {
             target.setObfuscated(false);
             target.setStrict(true);
             vm.add(new EntryPointTransformer(entryPoint));
-            vm.entryPoint(EntryPoint.class.getName());
+            vm.setEntryPoint(EntryPoint.class.getName());
             vm.installPlugins();
             vm.build(buildTarget, name);
             List<Problem> problems = vm.getProblemProvider().getSevereProblems();

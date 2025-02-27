@@ -15,7 +15,9 @@
  */
 package org.teavm.model.optimization;
 
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import org.teavm.model.BasicBlockReader;
 import org.teavm.model.MethodReference;
 import org.teavm.model.ProgramReader;
@@ -31,6 +33,8 @@ public class DefaultInliningStrategy implements InliningStrategy {
     private final int depthThreshold;
     private final int totalComplexityThreshold;
     private final boolean onceUsedOnly;
+    private int getComplexityDepth;
+    private Map<MethodReference, Complexity> complexityCache = new HashMap<>();
 
     public DefaultInliningStrategy(int complexityThreshold, int depthThreshold, int totalComplexityThreshold,
             boolean onceUsedOnly) {
@@ -52,7 +56,21 @@ public class DefaultInliningStrategy implements InliningStrategy {
         return new InliningStepImpl(complexityHolder);
     }
 
-    private static Complexity getComplexity(ProgramReader program, InliningContext context) {
+    @Override
+    public void methodChanged(MethodReference method) {
+        complexityCache.remove(method);
+    }
+
+    private Complexity getComplexity(MethodReference methodRef, InliningContext context) {
+        var result = complexityCache.get(methodRef);
+        if (result == null) {
+            result = getComplexity(context.getProgram(methodRef), context);
+            complexityCache.put(methodRef, result);
+        }
+        return result;
+    }
+
+    private Complexity getComplexity(ProgramReader program, InliningContext context) {
         int complexity = 0;
         ComplexityCounter counter = new ComplexityCounter(context);
         for (int i = 0; i < program.basicBlockCount(); ++i) {
@@ -80,7 +98,7 @@ public class DefaultInliningStrategy implements InliningStrategy {
                 return null;
             }
 
-            Complexity complexity = getComplexity(program, context);
+            Complexity complexity = getComplexity(method, context);
             if (onceUsedOnly && !context.isUsedOnce(method)) {
                 if (complexity.callsToUsedOnceMethods || complexity.score > 1) {
                     return null;
@@ -101,7 +119,7 @@ public class DefaultInliningStrategy implements InliningStrategy {
         int complexity;
     }
 
-    static class ComplexityCounter extends AbstractInstructionReader {
+    class ComplexityCounter extends AbstractInstructionReader {
         InliningContext context;
         int complexity;
         boolean callsToUsedOnceMethods;
@@ -124,18 +142,19 @@ public class DefaultInliningStrategy implements InliningStrategy {
         public void invoke(VariableReader receiver, VariableReader instance, MethodReference method,
                 List<? extends VariableReader> arguments, InvocationType type) {
             if (type == InvocationType.SPECIAL && context != null && context.isUsedOnce(method)) {
-                ProgramReader program = context.getProgram(method);
-                if (!isTrivialCall(program)) {
+                if (!isTrivialCall(method)) {
                     callsToUsedOnceMethods = true;
                 }
             }
         }
 
-        private boolean isTrivialCall(ProgramReader program) {
-            if (program == null) {
+        private boolean isTrivialCall(MethodReference methodRef) {
+            if (context.getProgram(methodRef) == null || getComplexityDepth > 10) {
                return false;
             }
-            Complexity complexity = getComplexity(program, context);
+            getComplexityDepth++;
+            Complexity complexity = getComplexity(methodRef, context);
+            getComplexityDepth--;
             return complexity.score <= 1 && !complexity.callsToUsedOnceMethods;
         }
 

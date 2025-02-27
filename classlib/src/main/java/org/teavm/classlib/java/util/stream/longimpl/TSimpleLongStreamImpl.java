@@ -32,6 +32,7 @@ import java.util.function.LongToIntFunction;
 import java.util.function.LongUnaryOperator;
 import java.util.function.ObjLongConsumer;
 import java.util.function.Supplier;
+import org.teavm.classlib.java.util.TLongSummaryStatistics;
 import org.teavm.classlib.java.util.stream.TDoubleStream;
 import org.teavm.classlib.java.util.stream.TIntStream;
 import org.teavm.classlib.java.util.stream.TLongStream;
@@ -88,6 +89,16 @@ public abstract class TSimpleLongStreamImpl implements TLongStream {
     @Override
     public TLongStream limit(long maxSize) {
         return new TLimitingLongStreamImpl(this, (int) maxSize);
+    }
+
+    @Override
+    public TLongStream takeWhile(LongPredicate predicate) {
+        return new TTakeWhileLongStream(this, predicate);
+    }
+
+    @Override
+    public TLongStream dropWhile(LongPredicate predicate) {
+        return new TDropWhileLongStream(this, predicate);
     }
 
     @Override
@@ -207,6 +218,15 @@ public abstract class TSimpleLongStreamImpl implements TLongStream {
             // go on
         }
         return consumer.count > 0 ? OptionalDouble.of(consumer.sum / consumer.count) : OptionalDouble.empty();
+    }
+
+    @Override
+    public TLongSummaryStatistics summaryStatistics() {
+        TSummaryLongConsumer consumer = new TSummaryLongConsumer();
+        while (next(consumer)) {
+            // go on
+        }
+        return consumer.stat;
     }
 
     @Override

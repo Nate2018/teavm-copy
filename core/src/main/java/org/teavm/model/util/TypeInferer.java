@@ -260,7 +260,7 @@ public class TypeInferer {
         @Override
         public void createArray(VariableReader receiver, ValueType itemType,
                 List<? extends VariableReader> dimensions) {
-            types[receiver.getIndex()] = convert(ValueType.arrayOf(itemType));
+            types[receiver.getIndex()] = convert(itemType);
         }
 
         @Override
@@ -296,7 +296,7 @@ public class TypeInferer {
         }
 
         @Override
-        public void cast(VariableReader receiver, VariableReader value, ValueType targetType) {
+        public void cast(VariableReader receiver, VariableReader value, ValueType targetType, boolean weak) {
             types[receiver.getIndex()] = convert(targetType);
         }
 

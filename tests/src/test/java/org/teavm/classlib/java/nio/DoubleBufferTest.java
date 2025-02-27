@@ -27,10 +27,8 @@ import java.nio.ReadOnlyBufferException;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.teavm.junit.TeaVMTestRunner;
-import org.teavm.junit.WholeClassCompilation;
 
 @RunWith(TeaVMTestRunner.class)
-@WholeClassCompilation
 public class DoubleBufferTest {
     @Test
     public void allocatesSimple() {
@@ -371,5 +369,12 @@ public class DoubleBufferTest {
         buffer.position(2);
         buffer.reset();
         assertThat(buffer.position(), is(1));
+    }
+
+    @Test
+    public void putEmptyArray() {
+        DoubleBuffer db = DoubleBuffer.allocate(0);
+        db.put(new double[0]);
+        db.get(new double[0]);
     }
 }

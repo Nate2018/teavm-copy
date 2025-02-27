@@ -27,10 +27,8 @@ import java.nio.ShortBuffer;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.teavm.junit.TeaVMTestRunner;
-import org.teavm.junit.WholeClassCompilation;
 
 @RunWith(TeaVMTestRunner.class)
-@WholeClassCompilation
 public class ShortBufferTest {
     @Test
     public void allocatesSimple() {
@@ -371,5 +369,12 @@ public class ShortBufferTest {
         buffer.position(2);
         buffer.reset();
         assertThat(buffer.position(), is(1));
+    }
+
+    @Test
+    public void putEmptyArray() {
+        ShortBuffer sb = ShortBuffer.allocate(0);
+        sb.put(new short[0]);
+        sb.get(new short[0]);
     }
 }

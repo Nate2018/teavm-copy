@@ -93,7 +93,7 @@ public class NativePointerFinder {
         }
 
         @Override
-        public void cast(VariableReader receiver, VariableReader value, ValueType targetType) {
+        public void cast(VariableReader receiver, VariableReader value, ValueType targetType, boolean weak) {
             assignmentGraph.addEdge(value.getIndex(), receiver.getIndex());
         }
 
@@ -120,6 +120,6 @@ public class NativePointerFinder {
         }
         String className = ((ValueType.Object) type).getClassName();
         return characteristics.isStructure(className) || className.equals(Address.class.getName())
-                || characteristics.isFunction(className);
+                || characteristics.isFunction(className) || characteristics.isResource(className);
     }
 }

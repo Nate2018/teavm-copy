@@ -26,6 +26,7 @@ import org.teavm.metaprogramming.impl.model.MethodDescriber;
 import org.teavm.metaprogramming.impl.model.MethodModel;
 import org.teavm.metaprogramming.impl.optimization.Optimizations;
 import org.teavm.metaprogramming.impl.reflect.ReflectContext;
+import org.teavm.model.ClassHierarchy;
 import org.teavm.model.ClassReader;
 import org.teavm.model.MethodReader;
 import org.teavm.model.MethodReference;
@@ -42,11 +43,11 @@ public class MetaprogrammingDependencyListener extends AbstractDependencyListene
     @Override
     public void started(DependencyAgent agent) {
         proxyClassLoader = new MetaprogrammingClassLoader(agent.getClassLoader());
-        describer = new MethodDescriber(agent.getDiagnostics(), agent.getClassSource());
+        describer = new MethodDescriber(MetaprogrammingImpl.createDiagnostics(), agent.getClassSource());
 
         MetaprogrammingImpl.classLoader = proxyClassLoader;
-        MetaprogrammingImpl.classSource = agent.getClassSource();
-        MetaprogrammingImpl.hierarchy = agent.getClassHierarchy();
+        MetaprogrammingImpl.classSource = agent.getUnprocessedClassSource();
+        MetaprogrammingImpl.hierarchy = new ClassHierarchy(agent.getUnprocessedClassSource());
         MetaprogrammingImpl.incrementalDependencies = agent.getIncrementalCache();
         MetaprogrammingImpl.agent = agent;
         MetaprogrammingImpl.reflectContext = new ReflectContext(agent.getClassHierarchy(), proxyClassLoader);
@@ -93,10 +94,11 @@ public class MetaprogrammingDependencyListener extends AbstractDependencyListene
             if (model.getUsages().size() == 1) {
                 emitSingleUsage(model, pe, paramVars);
             } else if (model.getUsages().isEmpty()) {
-                if (model.getMethod().getReturnType() == ValueType.VOID) {
+                var returnType = model.getMethod().getReturnType();
+                if (returnType == ValueType.VOID) {
                     pe.exit();
                 } else {
-                    pe.constantNull(Object.class).returnValue();
+                    pe.defaultValue(returnType).returnValue();
                 }
             } else {
                 emitMultipleUsage(model, pe, agent, paramVars);
@@ -146,10 +148,11 @@ public class MetaprogrammingDependencyListener extends AbstractDependencyListene
         }
 
         choice.otherwise(() -> {
-            if (methodDep.getReference().getReturnType() == ValueType.VOID) {
+            var returnType = methodDep.getReference().getReturnType();
+            if (returnType == ValueType.VOID) {
                 pe.exit();
             } else {
-                pe.constantNull(Object.class).returnValue();
+                pe.defaultValue(returnType).returnValue();
             }
         });
     }

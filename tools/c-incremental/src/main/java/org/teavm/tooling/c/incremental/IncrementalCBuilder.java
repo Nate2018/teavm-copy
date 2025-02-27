@@ -26,7 +26,6 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
@@ -65,7 +64,6 @@ public class IncrementalCBuilder {
     private String[] classPath;
     private int minHeapSize = 4;
     private int maxHeapSize = 128;
-    private boolean longjmpSupported = true;
     private boolean lineNumbersGenerated;
     private String targetPath;
     private String externalTool;
@@ -137,10 +135,6 @@ public class IncrementalCBuilder {
 
     public void setMainFunctionName(String mainFunctionName) {
         this.mainFunctionName = mainFunctionName;
-    }
-
-    public void setLongjmpSupported(boolean longjmpSupported) {
-        this.longjmpSupported = longjmpSupported;
     }
 
     public void addProgressHandler(ProgressHandler handler) {
@@ -342,7 +336,6 @@ public class IncrementalCBuilder {
         cTarget.setMinHeapSize(minHeapSize * 1024 * 1024);
         cTarget.setMaxHeapSize(maxHeapSize * 1024 * 1024);
         cTarget.setLineNumbersGenerated(lineNumbersGenerated);
-        cTarget.setLongjmpUsed(longjmpSupported);
         cTarget.setHeapDump(true);
         vm.setOptimizationLevel(TeaVMOptimizationLevel.SIMPLE);
         vm.setCacheStatus(classSource);
@@ -352,7 +345,10 @@ public class IncrementalCBuilder {
         vm.installPlugins();
 
         vm.setLastKnownClasses(lastReachedClasses);
-        vm.entryPoint(mainClass, mainFunctionName != null ? mainFunctionName : "main");
+        vm.setEntryPoint(mainClass);
+        if (mainFunctionName != null) {
+            vm.setEntryPointName(mainFunctionName);
+        }
 
         log.info("Starting build");
         progressListener.last = 0;
@@ -533,7 +529,7 @@ public class IncrementalCBuilder {
     }
 
     private void fireBuildComplete(TeaVM vm) {
-        SimpleBuildResult result = new SimpleBuildResult(vm, Collections.emptyList());
+        SimpleBuildResult result = new SimpleBuildResult(vm);
         for (BuilderListener listener : listeners) {
             listener.compilationComplete(result);
         }

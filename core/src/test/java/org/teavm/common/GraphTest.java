@@ -144,14 +144,12 @@ public class GraphTest {
         builder.addEdge(5, 3);
 
         Graph graph = builder.build();
-        DefaultGraphSplittingBackend backend = new DefaultGraphSplittingBackend(graph);
+        var backend = new DefaultGraphSplittingBackend(graph);
         int[] weights = { 1, 4, 1, 10, 1, 1 };
         GraphUtils.splitIrreducibleGraph(graph, weights, backend);
         Graph result = backend.getGraph();
 
-        assertTrue("Should be irreducible", GraphUtils.isIrreducible(graph));
-        assertFalse("Should be reducible", GraphUtils.isIrreducible(result));
-        assertTrue("Should be equivalent", isEquivalent(backend, graph));
+        check(graph, result, backend);
     }
 
     @Test
@@ -163,15 +161,13 @@ public class GraphTest {
         builder.addEdge(2, 1);
         Graph graph = builder.build();
 
-        DefaultGraphSplittingBackend backend = new DefaultGraphSplittingBackend(graph);
+        var backend = new DefaultGraphSplittingBackend(graph);
         int[] weights = new int[graph.size()];
         Arrays.fill(weights, 1);
         GraphUtils.splitIrreducibleGraph(graph, weights, backend);
         Graph result = backend.getGraph();
 
-        assertTrue("Should be irreducible", GraphUtils.isIrreducible(graph));
-        assertFalse("Should be reducible", GraphUtils.isIrreducible(result));
-        assertTrue("Should be equivalent", isEquivalent(backend, graph));
+        check(graph, result, backend);
     }
 
     @Test
@@ -195,15 +191,13 @@ public class GraphTest {
         builder.addEdge(7, 8);
         builder.addEdge(8, 7);
         Graph graph = builder.build();
-        DefaultGraphSplittingBackend backend = new DefaultGraphSplittingBackend(graph);
+        var backend = new DefaultGraphSplittingBackend(graph);
         int[] weights = new int[graph.size()];
         Arrays.fill(weights, 1);
         GraphUtils.splitIrreducibleGraph(graph, weights, backend);
         Graph result = backend.getGraph();
 
-        assertTrue("Should be irreducible", GraphUtils.isIrreducible(graph));
-        assertFalse("Should be reducible", GraphUtils.isIrreducible(result));
-        assertTrue("Should be equivalent", isEquivalent(backend, graph));
+        check(graph, result, backend);
     }
 
     @Test
@@ -219,15 +213,13 @@ public class GraphTest {
         builder.addEdge(4, 1);
 
         Graph graph = builder.build();
-        DefaultGraphSplittingBackend backend = new DefaultGraphSplittingBackend(graph);
+        var backend = new DefaultGraphSplittingBackend(graph);
         int[] weights = new int[graph.size()];
         Arrays.fill(weights, 1);
         GraphUtils.splitIrreducibleGraph(graph, weights, backend);
         Graph result = backend.getGraph();
 
-        assertTrue("Should be irreducible", GraphUtils.isIrreducible(graph));
-        assertFalse("Should be reducible", GraphUtils.isIrreducible(result));
-        assertTrue("Should be equivalent", isEquivalent(backend, graph));
+        check(graph, result, backend);
     }
 
     @Test
@@ -287,15 +279,13 @@ public class GraphTest {
         addEdges(builder, 69, 23);
 
         Graph graph = builder.build();
-        DefaultGraphSplittingBackend backend = new DefaultGraphSplittingBackend(graph);
+        var backend = new DefaultGraphSplittingBackend(graph);
         int[] weights = new int[graph.size()];
         Arrays.fill(weights, 1);
         GraphUtils.splitIrreducibleGraph(graph, weights, backend);
         Graph result = backend.getGraph();
 
-        assertTrue("Should be irreducible", GraphUtils.isIrreducible(graph));
-        assertFalse("Should be reducible", GraphUtils.isIrreducible(result));
-        assertTrue("Should be equivalent", isEquivalent(backend, graph));
+        check(graph, result, backend);
     }
 
     @Test
@@ -316,15 +306,99 @@ public class GraphTest {
         addEdges(builder, 12, 1);
 
         Graph graph = builder.build();
-        DefaultGraphSplittingBackend backend = new DefaultGraphSplittingBackend(graph);
+        var backend = new DefaultGraphSplittingBackend(graph);
         int[] weights = new int[graph.size()];
         Arrays.fill(weights, 1);
         GraphUtils.splitIrreducibleGraph(graph, weights, backend);
         Graph result = backend.getGraph();
 
-        assertTrue("Should be irreducible", GraphUtils.isIrreducible(graph));
+        check(graph, result, backend);
+    }
+
+    @Test
+    public void irreducibleGraphSplit7() {
+        var builder = new GraphBuilder();
+        addEdges(builder, 0, 35);
+        addEdges(builder, 1, 28);
+        addEdges(builder, 2, 25);
+        addEdges(builder, 3, 2, 15);
+        addEdges(builder, 4, 27);
+        addEdges(builder, 5, 13, 14);
+        addEdges(builder, 6, 8, 31);
+        addEdges(builder, 7, 11, 12);
+        addEdges(builder, 9, 10, 33);
+        addEdges(builder, 11, 27);
+        addEdges(builder, 12, 5);
+        addEdges(builder, 13, 26);
+        addEdges(builder, 14, 3);
+        addEdges(builder, 15, 23);
+        addEdges(builder, 16, 2, 24);
+        addEdges(builder, 17, 22);
+        addEdges(builder, 18, 23);
+        addEdges(builder, 19, 21, 34);
+        addEdges(builder, 20, 22);
+        addEdges(builder, 22, 18, 19);
+        addEdges(builder, 23, 16, 17);
+        addEdges(builder, 24);
+        addEdges(builder, 25, 1, 38);
+        addEdges(builder, 26, 4, 29);
+        addEdges(builder, 27, 6, 30);
+        addEdges(builder, 28, 36, 37);
+        addEdges(builder, 29, 3);
+        addEdges(builder, 30, 5);
+        addEdges(builder, 31, 7);
+        addEdges(builder, 32, 7);
+        addEdges(builder, 33, 7);
+        addEdges(builder, 34, 20);
+        addEdges(builder, 35, 9, 32);
+
+        var graph = builder.build();
+        var backend = new DefaultGraphSplittingBackend(graph);
+        var weights = new int[graph.size()];
+        Arrays.fill(weights, 1);
+        GraphUtils.splitIrreducibleGraph(graph, weights, backend);
+        var result = backend.getGraph();
+
+        check(graph, result, backend);
+    }
+
+    @Test
+    public void irreducibleGraphSplit8() {
+        var builder = new GraphBuilder();
+        addEdges(builder, 0, 2, 1);
+        addEdges(builder, 1, 2, 3);
+        addEdges(builder, 2, 4);
+        addEdges(builder, 3, 9);
+        addEdges(builder, 4, 5);
+        addEdges(builder, 5, 6, 7);
+        addEdges(builder, 6, 4);
+        addEdges(builder, 7, 8, 10);
+        addEdges(builder, 8, 7, 10, 9);
+        addEdges(builder, 9, 8, 4);
+
+        var graph = builder.build();
+        var backend = new DefaultGraphSplittingBackend(graph);
+        var weights = new int[] { 3, 2, 1, 9, 34, 6, 1, 6, 8, 24, 3 };
+        GraphUtils.splitIrreducibleGraph(graph, weights, backend);
+        var result = backend.getGraph();
+
+        check(graph, result, backend);
+    }
+
+    private void check(Graph original, Graph result, DefaultGraphSplittingBackend backend) {
+        assertTrue("Should be irreducible", GraphUtils.isIrreducible(original));
         assertFalse("Should be reducible", GraphUtils.isIrreducible(result));
-        assertTrue("Should be equivalent", isEquivalent(backend, graph));
+        assertTrue("Should be equivalent", isEquivalent(backend, original));
+        assertFalse("Should not have disconnected nodes", hasDisconnectedNodes(result));
+    }
+
+    private boolean hasDisconnectedNodes(Graph graph) {
+        for (var i = 1; i < graph.size(); ++i) {
+            if (graph.incomingEdgesCount(i) == 0) {
+                return true;
+            }
+        }
+        return false;
     }
     
     private static void addEdges(GraphBuilder builder, int from, int... to) {

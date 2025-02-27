@@ -87,6 +87,20 @@ public final class UnicodeHelper {
         return sb.toString();
     }
 
+    public static String encodeCaseMapping(int[] data) {
+        StringBuilder sb = new StringBuilder();
+        int sz = data.length / 2;
+        Base46.encodeUnsigned(sb, sz);
+        int last = 0;
+        for (int i = 0; i < sz; i++) {
+            int v = data[i * 2];
+            Base46.encodeUnsigned(sb, v - last);
+            last = v;
+            Base46.encode(sb, data[i * 2 + 1]);
+        }
+        return sb.toString();
+    }
+
     public static int[] decodeIntDiff(String text) {
         CharFlow flow = new CharFlow(text.toCharArray());
         int sz = Base46.decodeUnsigned(flow);
@@ -97,6 +111,39 @@ public final class UnicodeHelper {
             data[i] = last;
         }
         return data;
+    }
+
+    public static int[] decodeCaseMapping(String text) {
+        CharFlow flow = new CharFlow(text.toCharArray());
+        int sz = Base46.decodeUnsigned(flow);
+        int[] data = new int[sz * 2];
+        int last = 0;
+        for (int i = 0; i < sz; i++) {
+            last += Base46.decodeUnsigned(flow);
+            data[i * 2] = last;
+            data[i * 2 + 1] = Base46.decode(flow);
+        }
+        return data;
+    }
+
+    public static CharMapping createCharMapping(int[] data) {
+        var result = new int[65536];
+        var last = 0;
+        var lastValue = 0;
+        for (var i = 0; i < data.length; i += 2) {
+            var key = data[i];
+            var value = data[i + 1];
+            if (key >= result.length) {
+                if (key == last) {
+                    break;
+                }
+                key = result.length;
+            }
+            Arrays.fill(result, last, key, lastValue);
+            last = key;
+            lastValue = value;
+        }
+        return new CharMapping(data, result);
     }
 
     public static char encodeByte(byte b) {

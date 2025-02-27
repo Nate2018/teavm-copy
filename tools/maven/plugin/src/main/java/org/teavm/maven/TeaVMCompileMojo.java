@@ -16,7 +16,6 @@
 package org.teavm.maven;
 
 import java.io.File;
-import java.net.URLClassLoader;
 import java.rmi.NotBoundException;
 import java.rmi.RemoteException;
 import java.rmi.registry.LocateRegistry;
@@ -38,8 +37,11 @@ import org.apache.maven.plugins.annotations.Parameter;
 import org.apache.maven.plugins.annotations.ResolutionScope;
 import org.apache.maven.project.MavenProject;
 import org.apache.maven.repository.RepositorySystem;
+import org.teavm.backend.javascript.JSModuleType;
+import org.teavm.backend.wasm.WasmDebugInfoLocation;
 import org.teavm.backend.wasm.render.WasmBinaryVersion;
 import org.teavm.tooling.TeaVMProblemRenderer;
+import org.teavm.tooling.TeaVMSourceFilePolicy;
 import org.teavm.tooling.TeaVMTargetType;
 import org.teavm.tooling.builder.BuildException;
 import org.teavm.tooling.builder.BuildResult;
@@ -83,14 +85,20 @@ public class TeaVMCompileMojo extends AbstractMojo {
     @Parameter(property = "teavm.strict", defaultValue = "false")
     private boolean strict;
 
-    @Parameter(property = "teavm.maxTopLevelNames", defaultValue = "10000")
-    private int maxTopLevelNames = 10000;
+    @Parameter(property = "teavm.jsModuleType", defaultValue = "UMD")
+    private JSModuleType jsModuleType;
+
+    @Parameter(property = "teavm.maxTopLevelNames", defaultValue = "80000")
+    private int maxTopLevelNames = 80_000;
 
     @Parameter
     private Properties properties;
 
     @Parameter(property = "teavm.debugInformationGenerated", defaultValue = "false")
     private boolean debugInformationGenerated;
+
+    @Parameter(property = "teavm.debugInfoLocation", defaultValue = "EXTERNAL")
+    private WasmDebugInfoLocation wasmDebugInfoLocation = WasmDebugInfoLocation.EXTERNAL;
 
     @Parameter(property = "teavm.sourceMapsGenerated", defaultValue = "false")
     private boolean sourceMapsGenerated;
@@ -140,6 +148,9 @@ public class TeaVMCompileMojo extends AbstractMojo {
     @Parameter(property = "teavm.wasmVersion", defaultValue = "V_0x1")
     private WasmBinaryVersion wasmVersion = WasmBinaryVersion.V_0x1;
 
+    @Parameter(property = "teavm.wasmExceptionsUsed", defaultValue = "false")
+    private boolean wasmExceptionsUsed;
+
     @Parameter(property = "teavm.minHeapSize", defaultValue = "4")
     private int minHeapSize;
 
@@ -152,14 +163,14 @@ public class TeaVMCompileMojo extends AbstractMojo {
     @Parameter(property = "teavm.processMemory", defaultValue = "512")
     private int processMemory;
 
-    @Parameter(property = "teavm.longjmpSupported", defaultValue = "true")
-    private boolean longjmpSupported;
-
     @Parameter(property = "teavm.heapDump", defaultValue = "false")
     private boolean heapDump;
 
     @Parameter(property = "teavm.shortFileNames", defaultValue = "false")
     private boolean shortFileNames;
+
+    @Parameter(property = "teavm.assertionsRemoved", defaultValue = "false")
+    private boolean assertionsRemoved;
 
     private void setupBuilder(BuildStrategy builder) throws MojoExecutionException {
         builder.setLog(new MavenTeaVMToolLog(getLog()));
@@ -167,6 +178,7 @@ public class TeaVMCompileMojo extends AbstractMojo {
             builder.setClassPathEntries(prepareClassPath());
             builder.setObfuscated(minifying);
             builder.setStrict(strict);
+            builder.setJsModuleType(jsModuleType);
             builder.setMaxTopLevelNames(maxTopLevelNames);
             builder.setTargetDirectory(targetDirectory.getAbsolutePath());
             if (transformers != null) {
@@ -181,11 +193,15 @@ public class TeaVMCompileMojo extends AbstractMojo {
             }
             builder.setIncremental(incremental);
             builder.setDebugInformationGenerated(debugInformationGenerated);
+            builder.setWasmDebugInfoLocation(wasmDebugInfoLocation);
             builder.setSourceMapsFileGenerated(sourceMapsGenerated);
-            builder.setSourceFilesCopied(sourceFilesCopied);
+            builder.setSourceFilePolicy(sourceFilesCopied
+                    ? TeaVMSourceFilePolicy.COPY
+                    : TeaVMSourceFilePolicy.DO_NOTHING);
             builder.setMinHeapSize(minHeapSize * 1024 * 1024);
             builder.setMaxHeapSize(maxHeapSize * 1024 * 1024);
             builder.setShortFileNames(shortFileNames);
+            builder.setAssertionsRemoved(assertionsRemoved);
         } catch (RuntimeException e) {
             throw new MojoExecutionException("Unexpected error occurred", e);
         }
@@ -247,7 +263,7 @@ public class TeaVMCompileMojo extends AbstractMojo {
         if (outOfProcess) {
             executeInSeparateProcess();
         } else {
-            executeWithBuilder(new InProcessBuildStrategy(URLClassLoader::new));
+            executeWithBuilder(new InProcessBuildStrategy());
         }
     }
 
@@ -262,7 +278,7 @@ public class TeaVMCompileMojo extends AbstractMojo {
         try {
             RemoteBuildService buildService;
             try {
-                Registry registry = LocateRegistry.getRegistry(daemon.getPort());
+                Registry registry = LocateRegistry.getRegistry("localhost", daemon.getPort());
                 buildService = (RemoteBuildService) registry.lookup(RemoteBuildService.ID);
             } catch (RemoteException | NotBoundException e) {
                 throw new MojoExecutionException("Error connecting TeaVM process", e);
@@ -295,7 +311,7 @@ public class TeaVMCompileMojo extends AbstractMojo {
             builder.setCacheDirectory(cacheDirectory.getAbsolutePath());
             builder.setTargetType(targetType);
             builder.setWasmVersion(wasmVersion);
-            builder.setLongjmpSupported(longjmpSupported);
+            builder.setWasmExceptionsUsed(wasmExceptionsUsed);
             builder.setHeapDump(heapDump);
             BuildResult result;
             result = builder.build();

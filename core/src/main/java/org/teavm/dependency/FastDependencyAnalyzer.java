@@ -23,7 +23,6 @@ import java.util.HashMap;
 import java.util.Map;
 import org.teavm.common.ServiceRepository;
 import org.teavm.diagnostics.Diagnostics;
-import org.teavm.model.BasicBlockReader;
 import org.teavm.model.ClassReader;
 import org.teavm.model.ClassReaderSource;
 import org.teavm.model.ElementModifier;
@@ -32,7 +31,6 @@ import org.teavm.model.MethodReader;
 import org.teavm.model.MethodReference;
 import org.teavm.model.ProgramReader;
 import org.teavm.model.ReferenceCache;
-import org.teavm.model.TryCatchBlockReader;
 import org.teavm.model.ValueType;
 
 public class FastDependencyAnalyzer extends DependencyAnalyzer {
@@ -42,8 +40,9 @@ public class FastDependencyAnalyzer extends DependencyAnalyzer {
     private Map<String, DependencyNode> subtypeNodes = new HashMap<>();
 
     public FastDependencyAnalyzer(ClassReaderSource classSource, ClassLoader classLoader,
-            ServiceRepository services, Diagnostics diagnostics, ReferenceCache referenceCache) {
-        super(classSource, classLoader, services, diagnostics, referenceCache);
+            ServiceRepository services, Diagnostics diagnostics, ReferenceCache referenceCache,
+            String[] platformTags) {
+        super(classSource, classLoader, services, diagnostics, referenceCache, platformTags);
 
         instancesNode = new DependencyNode(this, null);
         classesNode = new DependencyNode(this, null);
@@ -59,12 +58,12 @@ public class FastDependencyAnalyzer extends DependencyAnalyzer {
         ProgramReader program = method.getProgram();
 
         if (program != null) {
-            FastInstructionAnalyzer instructionAnalyzer = new FastInstructionAnalyzer(this);
+            var instructionAnalyzer = new FastInstructionAnalyzer(this);
             instructionAnalyzer.setCaller(method.getReference());
-            for (BasicBlockReader block : program.getBasicBlocks()) {
+            for (var block : program.getBasicBlocks()) {
                 block.readAllInstructions(instructionAnalyzer);
 
-                for (TryCatchBlockReader tryCatch : block.readTryCatchBlocks()) {
+                for (var tryCatch : block.readTryCatchBlocks()) {
                     if (tryCatch.getExceptionType() != null) {
                         linkClass(tryCatch.getExceptionType());
                     }

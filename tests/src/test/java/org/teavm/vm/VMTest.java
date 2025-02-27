@@ -28,10 +28,14 @@ import org.junit.runner.RunWith;
 import org.teavm.interop.Async;
 import org.teavm.interop.AsyncCallback;
 import org.teavm.jso.JSBody;
+import org.teavm.junit.EachTestCompiledSeparately;
 import org.teavm.junit.SkipJVM;
+import org.teavm.junit.SkipPlatform;
 import org.teavm.junit.TeaVMTestRunner;
+import org.teavm.junit.TestPlatform;
 
 @RunWith(TeaVMTestRunner.class)
+@EachTestCompiledSeparately
 public class VMTest {
     @Test
     public void multiArrayCreated() {
@@ -40,6 +44,32 @@ public class VMTest {
         assertEquals(3, array[0].length);
         assertEquals(int[][].class, array.getClass());
         assertEquals(int[].class, array[0].getClass());
+    }
+
+    @Test
+    public void longMultiArrayCreated() {
+        long[][] array = new long[3][2];
+        assertEquals(3, array.length);
+        assertEquals(2, array[1].length);
+        assertEquals(2, array[2].length);
+
+        for (int i = 0; i < array.length; ++i) {
+            assertEquals(2, array[i].length);
+            for (int j = 0; j < array[i].length; ++j) {
+                assertEquals(0, array[i][j]);
+            }
+        }
+
+        for (int i = 0; i < array.length; ++i) {
+            Arrays.fill(array[i], 0x0123456789ABCDEFL);
+        }
+
+        for (int i = 0; i < array.length; ++i) {
+            assertEquals(2, array[i].length);
+            for (int j = 0; j < array[i].length; ++j) {
+                assertEquals(0x0123456789ABCDEFL, array[i][j]);
+            }
+        }
     }
 
     @Test
@@ -78,14 +108,17 @@ public class VMTest {
 
     @Test
     public void catchesException() {
+        var wasCaught = false;
         try {
             throw new IllegalArgumentException();
         } catch (IllegalArgumentException e) {
-            // do nothing
+            wasCaught = true;
         }
+        assertTrue(wasCaught);
     }
 
     @Test
+    @SkipPlatform(TestPlatform.WEBASSEMBLY)
     public void setsVariableBeforeTryCatch() {
         int a = 23;
         try {
@@ -225,6 +258,7 @@ public class VMTest {
 
     @Test
     @SkipJVM
+    @SkipPlatform({TestPlatform.C, TestPlatform.WEBASSEMBLY, TestPlatform.WASI, TestPlatform.WEBASSEMBLY_GC})
     public void asyncClinit() {
         assertEquals(0, initCount);
         assertEquals("foo", AsyncClinitClass.foo());
@@ -236,11 +270,13 @@ public class VMTest {
     }
 
     @Test
+    @SkipPlatform({TestPlatform.C, TestPlatform.WEBASSEMBLY, TestPlatform.WASI, TestPlatform.WEBASSEMBLY_GC})
     public void asyncClinitField() {
         assertEquals("ok", AsyncClinitClass.state);
     }
 
     @Test
+    @SkipPlatform({TestPlatform.C, TestPlatform.WEBASSEMBLY, TestPlatform.WASI, TestPlatform.WEBASSEMBLY_GC})
     public void asyncClinitInstance() {
         AsyncClinitClass acl = new AsyncClinitClass();
         assertEquals("ok", AsyncClinitClass.state);
@@ -248,6 +284,7 @@ public class VMTest {
     }
 
     @Test
+    @SkipPlatform({TestPlatform.C, TestPlatform.WEBASSEMBLY, TestPlatform.WASI, TestPlatform.WEBASSEMBLY_GC})
     public void asyncWait() {
         AsyncClinitClass acl = new AsyncClinitClass();
         acl.doWait();
@@ -256,6 +293,7 @@ public class VMTest {
 
     @Test
     @SkipJVM
+    @SkipPlatform({TestPlatform.C, TestPlatform.WEBASSEMBLY, TestPlatform.WASI, TestPlatform.WEBASSEMBLY_GC})
     public void loopAndExceptionPhi() {
         int[] a = createArray();
         int s = 0;
@@ -274,6 +312,7 @@ public class VMTest {
 
     @Test
     @SkipJVM
+    @SkipPlatform({TestPlatform.C, TestPlatform.WEBASSEMBLY, TestPlatform.WASI, TestPlatform.WEBASSEMBLY_GC})
     public void asyncTryCatch() {
         try {
             throwExceptionAsync();
@@ -285,6 +324,7 @@ public class VMTest {
 
     @Test
     @SkipJVM
+    @SkipPlatform({TestPlatform.C, TestPlatform.WEBASSEMBLY, TestPlatform.WASI, TestPlatform.WEBASSEMBLY_GC})
     public void asyncExceptionHandler() {
         try {
             throw new RuntimeException("OK");
@@ -470,7 +510,7 @@ public class VMTest {
     }
 
     static class SuperClass {
-        static final Integer ONE = new Integer(1);
+        static final Integer ONE = Integer.valueOf(1);
 
         private Integer value;
 
@@ -490,6 +530,7 @@ public class VMTest {
     }
 
     @Test
+    @SkipPlatform({TestPlatform.C, TestPlatform.WEBASSEMBLY, TestPlatform.WASI, TestPlatform.WEBASSEMBLY_GC})
     public void indirectDefaultMethod() {
         StringBuilder sb = new StringBuilder();
         for (FirstPath o : new FirstPath[] { new PathJoint(), new FirstPathOptimizationPrevention() }) {
@@ -499,6 +540,7 @@ public class VMTest {
     }
 
     @Test
+    @SkipPlatform({TestPlatform.C, TestPlatform.WEBASSEMBLY, TestPlatform.WASI, TestPlatform.WEBASSEMBLY_GC})
     public void indirectDefaultMethodSubclass() {
         StringBuilder sb = new StringBuilder();
         for (FirstPath o : new FirstPath[] { new PathJointSubclass(), new FirstPathOptimizationPrevention() }) {
@@ -573,6 +615,7 @@ public class VMTest {
     }
 
     @Test
+    @SkipPlatform({TestPlatform.WASI, TestPlatform.WEBASSEMBLY_GC})
     public void arrayMonitor() throws InterruptedException {
         int[] array = { 1, 2, 3 };
         synchronized (array) {
@@ -590,5 +633,61 @@ public class VMTest {
         assertEquals(0, ((int[][]) o).length);
         o = new int[0][];
         assertEquals(0, ((int[][]) o).length);
+    }
+
+    @Test
+    public void precedence() {
+        float a = count(3);
+        float b = count(7);
+        float c = 5;
+        assertEquals(1, a * b % c, 0.1f);
+        assertEquals(6, a * (b % c), 0.1f);
+    }
+
+    private int count(int value) {
+        int result = 0;
+        for (int i = 0; i < value; ++i) {
+            result += 1;
+        }
+        return result;
+    }
+
+    @Test
+    public void virtualCallWithPrivateMethods() {
+        assertEquals("ap", callA(new B()));
+    }
+
+    @Test
+    public void typeInferenceForArrayMerge() {
+        int[][] a = falseBoolean() ? null : array();
+        assertEquals(23, a[0][0]);
+    }
+
+    private boolean falseBoolean() {
+        return false;
+    }
+
+    private int[][] array() {
+        return new int[][] { { 23 } };
+    }
+
+    private static String callA(A a) {
+        return a.a();
+    }
+
+    static class A {
+        String a() {
+            return "a" + p();
+        }
+
+        private String p() {
+            return "p";
+        }
+    }
+
+    static class B extends A {
+        private String p() {
+            return "q";
+        }
     }
 }

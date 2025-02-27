@@ -16,6 +16,7 @@
 package org.teavm.vm;
 
 import java.io.IOException;
+import java.util.Collection;
 import java.util.List;
 import org.teavm.dependency.DependencyAnalyzer;
 import org.teavm.dependency.DependencyListener;
@@ -23,8 +24,10 @@ import org.teavm.model.ClassHolderTransformer;
 import org.teavm.model.ListableClassHolderSource;
 import org.teavm.model.ListableClassReaderSource;
 import org.teavm.model.MethodReader;
+import org.teavm.model.MethodReference;
 import org.teavm.model.Program;
 import org.teavm.model.optimization.InliningFilterFactory;
+import org.teavm.model.util.VariableCategoryProvider;
 import org.teavm.vm.spi.TeaVMHostExtension;
 
 public interface TeaVMTarget {
@@ -32,13 +35,19 @@ public interface TeaVMTarget {
 
     List<DependencyListener> getDependencyListeners();
 
+    default void setEntryPoint(String entryPoint, String name) {
+    }
+
     void setController(TeaVMTargetController controller);
 
     List<TeaVMHostExtension> getHostExtensions();
 
-    boolean requiresRegisterAllocation();
+    VariableCategoryProvider variableCategoryProvider();
 
     void contributeDependencies(DependencyAnalyzer dependencyAnalyzer);
+
+    default void beforeInlining(Program program, MethodReader method) {
+    }
 
     default void analyzeBeforeOptimizations(ListableClassReaderSource classSource) {
     }
@@ -55,5 +64,17 @@ public interface TeaVMTarget {
 
     default InliningFilterFactory getInliningFilter() {
         return InliningFilterFactory.DEFAULT;
+    }
+
+    default Collection<? extends MethodReference> getInitializerMethods() {
+        return null;
+    }
+
+    default boolean needsSystemArrayCopyOptimization() {
+        return true;
+    }
+
+    default boolean filterClassInitializer(String initializer) {
+        return true;
     }
 }

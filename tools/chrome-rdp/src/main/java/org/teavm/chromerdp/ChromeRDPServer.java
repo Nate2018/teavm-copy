@@ -27,6 +27,7 @@ import javax.websocket.server.ServerEndpointConfig;
 import org.eclipse.jetty.server.Server;
 import org.eclipse.jetty.server.ServerConnector;
 import org.eclipse.jetty.servlet.ServletContextHandler;
+import org.eclipse.jetty.websocket.jsr356.server.ContainerDefaultConfigurator;
 import org.eclipse.jetty.websocket.jsr356.server.deploy.WebSocketServerContainerInitializer;
 
 public class ChromeRDPServer {
@@ -54,6 +55,7 @@ public class ChromeRDPServer {
         server = new Server();
         ServerConnector connector = new ServerConnector(server);
         connector.setPort(port);
+        connector.setIdleTimeout(0);
         server.addConnector(connector);
 
         ServletContextHandler context = new ServletContextHandler(ServletContextHandler.SESSIONS);
@@ -80,6 +82,7 @@ public class ChromeRDPServer {
 
     private class RPDEndpointConfig implements ServerEndpointConfig {
         private Map<String, Object> userProperties = new HashMap<>();
+        private ContainerDefaultConfigurator configurator = new ContainerDefaultConfigurator();
 
         public RPDEndpointConfig() {
             userProperties.put("chrome.rdp", exchangeConsumer);
@@ -102,7 +105,7 @@ public class ChromeRDPServer {
 
         @Override
         public Configurator getConfigurator() {
-            return null;
+            return configurator;
         }
 
         @Override

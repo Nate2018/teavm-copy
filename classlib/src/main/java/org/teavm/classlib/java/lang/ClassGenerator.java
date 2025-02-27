@@ -15,7 +15,6 @@
  */
 package org.teavm.classlib.java.lang;
 
-import java.io.IOException;
 import java.util.Set;
 import org.teavm.backend.javascript.codegen.SourceWriter;
 import org.teavm.backend.javascript.rendering.Precedence;
@@ -43,7 +42,7 @@ public class ClassGenerator implements Generator, Injector, DependencyPlugin {
             new FieldReference(Class.class.getName(), "platformClass");
 
     @Override
-    public void generate(GeneratorContext context, SourceWriter writer, MethodReference methodRef) throws IOException {
+    public void generate(GeneratorContext context, SourceWriter writer, MethodReference methodRef) {
         switch (methodRef.getName()) {
             case "createMetadata":
                 generateCreateMetadata(context, writer);
@@ -52,10 +51,10 @@ public class ClassGenerator implements Generator, Injector, DependencyPlugin {
     }
 
     @Override
-    public void generate(InjectorContext context, MethodReference methodRef) throws IOException {
+    public void generate(InjectorContext context, MethodReference methodRef) {
         switch (methodRef.getName()) {
             case "newEmptyInstance":
-                context.getWriter().append("new (");
+                context.getWriter().append("new").ws().append("(");
                 context.writeExpr(context.getArgument(0), Precedence.MEMBER_ACCESS);
                 context.getWriter().append('.').appendField(platformClassField);
                 context.getWriter().append(")");
@@ -67,7 +66,16 @@ public class ClassGenerator implements Generator, Injector, DependencyPlugin {
     public void methodReached(DependencyAgent agent, MethodDependency method) {
         switch (method.getReference().getName()) {
             case "newEmptyInstance":
-                method.getVariable(0).getClassValueNode().connect(method.getResult());
+                method.getVariable(0).getClassValueNode().addConsumer(type -> {
+                    String className = type.getName();
+                    if (!className.startsWith("[") && !className.startsWith("~")) {
+                        ClassReader cls = agent.getClassSource().get(className);
+                        if (cls != null && !cls.hasModifier(ElementModifier.ABSTRACT)
+                                && !cls.hasModifier(ElementModifier.INTERFACE)) {
+                            method.getResult().propagate(type);
+                        }
+                    }
+                });
                 break;
             case "getSuperclass":
                 reachGetSuperclass(agent, method);
@@ -124,7 +132,7 @@ public class ClassGenerator implements Generator, Injector, DependencyPlugin {
         });
     }
 
-    private void generateCreateMetadata(GeneratorContext context, SourceWriter writer) throws IOException {
+    private void generateCreateMetadata(GeneratorContext context, SourceWriter writer) {
         ReflectionDependencyListener reflection = context.getService(ReflectionDependencyListener.class);
         for (String className : reflection.getClassesWithReflectableFields()) {
             generateCreateFieldsForClass(context, writer, className);
@@ -134,8 +142,7 @@ public class ClassGenerator implements Generator, Injector, DependencyPlugin {
         }
     }
 
-    private void generateCreateFieldsForClass(GeneratorContext context, SourceWriter writer, String className)
-            throws IOException {
+    private void generateCreateFieldsForClass(GeneratorContext context, SourceWriter writer, String className) {
         ReflectionDependencyListener reflection = context.getService(ReflectionDependencyListener.class);
         Set<String> accessibleFields = reflection.getAccessibleFields(className);
 
@@ -169,8 +176,7 @@ public class ClassGenerator implements Generator, Injector, DependencyPlugin {
         writer.outdent().append("];").softNewLine();
     }
 
-    private void generateCreateMethodsForClass(GeneratorContext context, SourceWriter writer, String className)
-            throws IOException {
+    private void generateCreateMethodsForClass(GeneratorContext context, SourceWriter writer, String className) {
         ReflectionDependencyListener reflection = context.getService(ReflectionDependencyListener.class);
         Set<MethodDescriptor> accessibleMethods = reflection.getAccessibleMethods(className);
 
@@ -210,7 +216,7 @@ public class ClassGenerator implements Generator, Injector, DependencyPlugin {
     }
 
     private <T extends MemberReader> void generateCreateMembers(SourceWriter writer, Iterable<T> members,
-            MemberRenderer<T> renderer) throws IOException {
+            MemberRenderer<T> renderer) {
         boolean first = true;
         for (T member : members) {
             if (!first) {
@@ -231,7 +237,7 @@ public class ClassGenerator implements Generator, Injector, DependencyPlugin {
         }
     }
 
-    private void appendProperty(SourceWriter writer, String name, boolean first, Fragment value) throws IOException {
+    private void appendProperty(SourceWriter writer, String name, boolean first, Fragment value) {
         if (!first) {
             writer.append(",").softNewLine();
         }
@@ -239,7 +245,7 @@ public class ClassGenerator implements Generator, Injector, DependencyPlugin {
         value.render();
     }
 
-    private void renderGetter(GeneratorContext context, SourceWriter writer, FieldReader field) throws IOException {
+    private void renderGetter(GeneratorContext context, SourceWriter writer, FieldReader field) {
         writer.append("function(obj)").ws().append("{").indent().softNewLine();
         initClass(context, writer, field);
         writer.append("return ");
@@ -248,7 +254,7 @@ public class ClassGenerator implements Generator, Injector, DependencyPlugin {
         writer.outdent().append("}");
     }
 
-    private void renderSetter(GeneratorContext context, SourceWriter writer, FieldReader field) throws IOException {
+    private void renderSetter(GeneratorContext context, SourceWriter writer, FieldReader field) {
         writer.append("function(obj,").ws().append("val)").ws().append("{").indent().softNewLine();
         initClass(context, writer, field);
         fieldAccess(writer, field);
@@ -258,7 +264,7 @@ public class ClassGenerator implements Generator, Injector, DependencyPlugin {
         writer.outdent().append("}");
     }
 
-    private void renderCallable(GeneratorContext context, SourceWriter writer, MethodReader method) throws IOException {
+    private void renderCallable(GeneratorContext context, SourceWriter writer, MethodReader method) {
         writer.append("function(obj,").ws().append("args)").ws().append("{").indent().softNewLine();
 
         initClass(context, writer, method);
@@ -266,7 +272,7 @@ public class ClassGenerator implements Generator, Injector, DependencyPlugin {
         if (method.getResultType() != ValueType.VOID) {
             writer.append("return ");
         }
-        writer.appendMethodBody(method.getReference());
+        writer.appendMethod(method.getReference());
 
         writer.append('(');
         boolean first = true;
@@ -290,13 +296,13 @@ public class ClassGenerator implements Generator, Injector, DependencyPlugin {
         writer.outdent().append("}");
     }
 
-    private void initClass(GeneratorContext context, SourceWriter writer, MemberReader member) throws IOException {
+    private void initClass(GeneratorContext context, SourceWriter writer, MemberReader member) {
         if (member.hasModifier(ElementModifier.STATIC) && context.isDynamicInitializer(member.getOwnerName())) {
             writer.appendClassInit(member.getOwnerName()).append("();").softNewLine();
         }
     }
 
-    private void fieldAccess(SourceWriter writer, FieldReader field) throws IOException {
+    private void fieldAccess(SourceWriter writer, FieldReader field) {
         if (field.hasModifier(ElementModifier.STATIC)) {
             writer.appendStaticField(field.getReference());
         } else {
@@ -304,35 +310,35 @@ public class ClassGenerator implements Generator, Injector, DependencyPlugin {
         }
     }
 
-    private void boxIfNecessary(SourceWriter writer, ValueType type, Fragment fragment) throws IOException {
+    private void boxIfNecessary(SourceWriter writer, ValueType type, Fragment fragment) {
         boolean boxed = false;
         if (type instanceof ValueType.Primitive) {
             switch (((ValueType.Primitive) type).getKind()) {
                 case BOOLEAN:
-                    writer.appendMethodBody(new MethodReference(Boolean.class, "valueOf", boolean.class,
+                    writer.appendMethod(new MethodReference(Boolean.class, "valueOf", boolean.class,
                             Boolean.class));
                     break;
                 case BYTE:
-                    writer.appendMethodBody(new MethodReference(Byte.class, "valueOf", byte.class, Byte.class));
+                    writer.appendMethod(new MethodReference(Byte.class, "valueOf", byte.class, Byte.class));
                     break;
                 case SHORT:
-                    writer.appendMethodBody(new MethodReference(Short.class, "valueOf", short.class, Short.class));
+                    writer.appendMethod(new MethodReference(Short.class, "valueOf", short.class, Short.class));
                     break;
                 case CHARACTER:
-                    writer.appendMethodBody(new MethodReference(Character.class, "valueOf", char.class,
+                    writer.appendMethod(new MethodReference(Character.class, "valueOf", char.class,
                             Character.class));
                     break;
                 case INTEGER:
-                    writer.appendMethodBody(new MethodReference(Integer.class, "valueOf", int.class, Integer.class));
+                    writer.appendMethod(new MethodReference(Integer.class, "valueOf", int.class, Integer.class));
                     break;
                 case LONG:
-                    writer.appendMethodBody(new MethodReference(Long.class, "valueOf", long.class, Long.class));
+                    writer.appendMethod(new MethodReference(Long.class, "valueOf", long.class, Long.class));
                     break;
                 case FLOAT:
-                    writer.appendMethodBody(new MethodReference(Float.class, "valueOf", float.class, Float.class));
+                    writer.appendMethod(new MethodReference(Float.class, "valueOf", float.class, Float.class));
                     break;
                 case DOUBLE:
-                    writer.appendMethodBody(new MethodReference(Double.class, "valueOf", double.class, Double.class));
+                    writer.appendMethod(new MethodReference(Double.class, "valueOf", double.class, Double.class));
                     break;
             }
             writer.append('(');
@@ -344,33 +350,33 @@ public class ClassGenerator implements Generator, Injector, DependencyPlugin {
         }
     }
 
-    private void unboxIfNecessary(SourceWriter writer, ValueType type, Fragment fragment) throws IOException {
+    private void unboxIfNecessary(SourceWriter writer, ValueType type, Fragment fragment) {
         boolean boxed = false;
         if (type instanceof ValueType.Primitive) {
             switch (((ValueType.Primitive) type).getKind()) {
                 case BOOLEAN:
-                    writer.appendMethodBody(new MethodReference(Boolean.class, "booleanValue", boolean.class));
+                    writer.appendMethod(new MethodReference(Boolean.class, "booleanValue", boolean.class));
                     break;
                 case BYTE:
-                    writer.appendMethodBody(new MethodReference(Byte.class, "byteValue", byte.class));
+                    writer.appendMethod(new MethodReference(Byte.class, "byteValue", byte.class));
                     break;
                 case SHORT:
-                    writer.appendMethodBody(new MethodReference(Short.class, "shortValue", short.class));
+                    writer.appendMethod(new MethodReference(Short.class, "shortValue", short.class));
                     break;
                 case CHARACTER:
-                    writer.appendMethodBody(new MethodReference(Character.class, "charValue", char.class));
+                    writer.appendMethod(new MethodReference(Character.class, "charValue", char.class));
                     break;
                 case INTEGER:
-                    writer.appendMethodBody(new MethodReference(Integer.class, "intValue", int.class));
+                    writer.appendMethod(new MethodReference(Integer.class, "intValue", int.class));
                     break;
                 case LONG:
-                    writer.appendMethodBody(new MethodReference(Long.class, "longValue", long.class));
+                    writer.appendMethod(new MethodReference(Long.class, "longValue", long.class));
                     break;
                 case FLOAT:
-                    writer.appendMethodBody(new MethodReference(Float.class, "floatValue", float.class));
+                    writer.appendMethod(new MethodReference(Float.class, "floatValue", float.class));
                     break;
                 case DOUBLE:
-                    writer.appendMethodBody(new MethodReference(Double.class, "doubleValue", double.class));
+                    writer.appendMethod(new MethodReference(Double.class, "doubleValue", double.class));
                     break;
             }
             writer.append('(');
@@ -383,10 +389,10 @@ public class ClassGenerator implements Generator, Injector, DependencyPlugin {
     }
 
     private interface Fragment {
-        void render() throws IOException;
+        void render();
     }
 
     private interface MemberRenderer<T extends MemberReader> {
-        void render(T member) throws IOException;
+        void render(T member);
     }
 }

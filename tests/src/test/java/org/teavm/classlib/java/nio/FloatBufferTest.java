@@ -27,10 +27,8 @@ import java.nio.ReadOnlyBufferException;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.teavm.junit.TeaVMTestRunner;
-import org.teavm.junit.WholeClassCompilation;
 
 @RunWith(TeaVMTestRunner.class)
-@WholeClassCompilation
 public class FloatBufferTest {
     @Test
     public void allocatesSimple() {
@@ -371,5 +369,12 @@ public class FloatBufferTest {
         buffer.position(2);
         buffer.reset();
         assertThat(buffer.position(), is(1));
+    }
+
+    @Test
+    public void putEmptyArray() {
+        FloatBuffer fb = FloatBuffer.allocate(0);
+        fb.put(new float[0]);
+        fb.get(new float[0]);
     }
 }

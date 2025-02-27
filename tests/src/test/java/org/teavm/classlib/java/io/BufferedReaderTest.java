@@ -15,6 +15,7 @@
  */
 package org.teavm.classlib.java.io;
 
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
 import java.io.BufferedReader;
@@ -23,10 +24,8 @@ import java.io.StringReader;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.teavm.junit.TeaVMTestRunner;
-import org.teavm.junit.WholeClassCompilation;
 
 @RunWith(TeaVMTestRunner.class)
-@WholeClassCompilation
 public class BufferedReaderTest {
     @Test
     public void readsCharacters() throws IOException {
@@ -96,5 +95,16 @@ public class BufferedReaderTest {
         assertEquals(50, buffer[0]);
         assertEquals(51, buffer[1]);
         assertEquals(199, buffer[149]);
+    }
+
+    @Test
+    public void lines() {
+        var reader = new BufferedReader(new StringReader("a\nb\n\n"));
+        var lines = reader.lines().toArray(String[]::new);
+        assertArrayEquals(new String[] { "a", "b", "" }, lines);
+
+        reader = new BufferedReader(new StringReader("a\nb\n\n"));
+        lines = reader.lines().filter(s -> !s.isEmpty()).map(s -> "*" + s).toArray(String[]::new);
+        assertArrayEquals(new String[] { "*a", "*b" }, lines);
     }
 }

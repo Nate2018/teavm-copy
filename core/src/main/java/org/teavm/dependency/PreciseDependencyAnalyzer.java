@@ -24,9 +24,13 @@ import org.teavm.model.ReferenceCache;
 import org.teavm.model.ValueType;
 
 public class PreciseDependencyAnalyzer extends DependencyAnalyzer {
+    private DependencyNode allArrayItemsNode;
+    private static final int DEGREE_THRESHOLD = 2;
+
     public PreciseDependencyAnalyzer(ClassReaderSource classSource, ClassLoader classLoader,
-            ServiceRepository services, Diagnostics diagnostics, ReferenceCache referenceCache) {
-        super(classSource, classLoader, services, diagnostics, referenceCache);
+            ServiceRepository services, Diagnostics diagnostics, ReferenceCache referenceCache,
+            String[] platformTags) {
+        super(classSource, classLoader, services, diagnostics, referenceCache, platformTags);
     }
 
     @Override
@@ -79,11 +83,22 @@ public class PreciseDependencyAnalyzer extends DependencyAnalyzer {
         ValueType itemTypeFilter = parent.typeFilter instanceof ValueType.Array
                 ? ((ValueType.Array) parent.typeFilter).getItemType()
                 : null;
-        DependencyNode node = createNode(itemTypeFilter);
-        node.degree = parent.degree + 1;
-        node.method = parent.method;
-        if (DependencyAnalyzer.shouldTag) {
-            node.tag = parent.tag + "[";
+        DependencyNode node;
+        if (parent.degree > DEGREE_THRESHOLD) {
+            if (allArrayItemsNode == null) {
+                allArrayItemsNode = createNode(null);
+                if (DependencyAnalyzer.shouldTag) {
+                    allArrayItemsNode.tag = "<any array item>";
+                }
+            }
+            node = allArrayItemsNode;
+        } else {
+            node = createNode(itemTypeFilter);
+            node.degree = parent.degree + 1;
+            node.method = parent.method;
+            if (DependencyAnalyzer.shouldTag) {
+                node.tag = parent.tag + "[";
+            }
         }
         return node;
     }

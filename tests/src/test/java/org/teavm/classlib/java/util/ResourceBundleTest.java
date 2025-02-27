@@ -24,9 +24,11 @@ import java.util.MissingResourceException;
 import java.util.ResourceBundle;
 import org.junit.Test;
 import org.junit.runner.RunWith;
+import org.teavm.junit.EachTestCompiledSeparately;
 import org.teavm.junit.TeaVMTestRunner;
 
 @RunWith(TeaVMTestRunner.class)
+@EachTestCompiledSeparately
 public class ResourceBundleTest {
     @Test
     public void getObjectLjava_lang_String() {
@@ -70,6 +72,19 @@ public class ResourceBundleTest {
             assertEquals(nonExistentBundle + "_" + locale, e.getClassName());
         }
 
+    }
+
+    @Test
+    public void simpleBundle() {
+        ResourceBundle bundle = ResourceBundle.getBundle("testBundle", Locale.ENGLISH);
+        assertEquals("testBundle", bundle.getBaseBundleName());
+        assertEquals("Test passed", bundle.getString("a"));
+        try {
+            bundle.getString("b");
+            fail("MissingResourceException not thrown");
+        } catch (MissingResourceException e) {
+            assertEquals("b", e.getKey());
+        }
     }
 
     /*

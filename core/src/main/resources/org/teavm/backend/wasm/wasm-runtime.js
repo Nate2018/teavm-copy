@@ -31,11 +31,13 @@ TeaVM.wasm = function() {
             lineBuffer += String.fromCharCode(charCode);
         }
     }
-    function towlower(code) {
-        return String.fromCharCode(code).toLowerCase().charCodeAt(0);
-    }
-    function towupper(code) {
-        return String.fromCharCode(code).toUpperCase().charCodeAt(0);
+    function putwchars(controller, buffer, count) {
+        let instance = controller.instance;
+        let memory = new Int8Array(instance.exports.memory.buffer);
+        for (let i = 0; i < count; ++i) {
+            // TODO: support UTF-8
+            putwchar(memory[buffer++]);
+        }
     }
     function currentTimeMillis() {
         return new Date().getTime();
@@ -48,10 +50,24 @@ TeaVM.wasm = function() {
         let memory = instance.exports.memory.buffer;
         let arrayPtr = instance.exports.teavm_stringData(string);
         let length = instance.exports.teavm_arrayLength(arrayPtr);
-        let arrayData = new DataView(memory, instance.exports.teavm_charArrayData(arrayPtr), length * 2);
+        let arrayData = new Uint16Array(memory, instance.exports.teavm_charArrayData(arrayPtr), length * 2);
         for (let i = 0; i < length; ++i) {
-            putwchar(arrayData.memory.getUint16(i * 2, true));
+            putwchar(arrayData[i]);
         }
+    }
+    function dateToString(timestamp, controller) {
+        const s = new Date(timestamp).toString();
+        let instance = controller.instance;
+        let result = instance.exports.teavm_allocateString(s.length);
+        if (result === 0) {
+            return 0;
+        }
+        let resultAddress = instance.exports.teavm_objectArrayData(instance.exports.teavm_stringData(result));
+        let resultView = new Uint16Array(instance.exports.memory.buffer, resultAddress, s.length);
+        for (let i = 0; i < s.length; ++i) {
+            resultView[i] = s.charCodeAt(i);
+        }
+        return result;
     }
     function logInt(i) {
         lineBuffer += i.toString();
@@ -72,7 +88,7 @@ TeaVM.wasm = function() {
             }
         }
         if (result >= 0) {
-            controller.timer = setTimeout(() => process(controller), result)
+            controller.timer = setTimeout(() => process(controller), Number(result))
         }
     }
 
@@ -85,19 +101,15 @@ TeaVM.wasm = function() {
         controller.complete = false;
         obj.teavm = {
             currentTimeMillis: currentTimeMillis,
-            nanoTime: function() { return performance.now(); },
-            isnan: isNaN,
-            teavm_getNaN: function() { return NaN; },
-            isinf: function(n) { return !isFinite(n) },
-            isfinite: isFinite,
-            putwchar: putwchar,
-            towlower: towlower,
-            towupper: towupper,
+            nanoTime: () => performance.now(),
+            putwcharsOut: (chars, count) => putwchars(controller, chars, count),
+            putwcharsErr: (chars, count) => putwchars(controller, chars, count),
             getNativeOffset: getNativeOffset,
             logString: string => logString(string, controller),
             logInt: logInt,
             logOutOfMemory: () => console.log("Out of memory"),
-            teavm_interrupt: () => interrupt(controller)
+            teavm_interrupt: () => interrupt(controller),
+            dateToString: (timestamp) => dateToString(timestamp, controller)
         };
 
         obj.teavmMath = Math;
@@ -162,25 +174,6 @@ TeaVM.wasm = function() {
     }
 
     function load(path, options) {
-        let xhr = new XMLHttpRequest();
-        xhr.responseType = "arraybuffer";
-        xhr.open("GET", path);
-
-        return new Promise((resolve, reject) => {
-            xhr.onload = () => {
-                let response = xhr.response;
-                if (!response) {
-                    reject("Error loading Wasm data")
-                    return;
-                }
-
-                resolve(response);
-            };
-            xhr.send();
-        }).then(data => create(data, options));
-    }
-
-    function create(data, options) {
         if (!options) {
             options = {};
         }
@@ -188,15 +181,15 @@ TeaVM.wasm = function() {
         const importObj = {};
         const controller = defaults(importObj);
         if (typeof options.installImports !== "undefined") {
-            options.installImports(importObj);
+            options.installImports(importObj, controller);
         }
 
-        return WebAssembly.instantiate(data, importObj).then(resultObject => {
-            controller.instance = resultObject.instance;
-            let teavm = createTeaVM(resultObject.instance);
+        return WebAssembly.instantiateStreaming(fetch(path), importObj).then((obj => {
+            controller.instance = obj.instance;
+            let teavm = createTeaVM(obj.instance);
             teavm.main = createMain(teavm, controller);
             return teavm;
-        });
+        }));
     }
 
     function createMain(teavm, controller) {
@@ -206,25 +199,30 @@ TeaVM.wasm = function() {
             }
             return new Promise((resolve, reject) => {
                 let javaArgs = teavm.allocateStringArray(args.length);
-                let javaArgsData = new DataView(teavm.memory.buffer, teavm.objectArrayData(javaArgs), args.length * 4);
+                let javaArgsData = new Int32Array(teavm.memory.buffer, teavm.objectArrayData(javaArgs), args.length);
                 for (let i = 0; i < args.length; ++i) {
                     let arg = args[i];
                     let javaArg = teavm.allocateString(arg.length);
                     let javaArgAddress = teavm.objectArrayData(teavm.stringData(javaArg));
-                    let javaArgData = new DataView(teavm.memory.buffer, javaArgAddress, arg.length * 2);
+                    let javaArgData = new Uint16Array(teavm.memory.buffer, javaArgAddress, arg.length);
                     for (let j = 0; j < arg.length; ++j) {
-                        javaArgData.setUint16(j * 2, arg.charCodeAt(j), true);
+                        javaArgData[j] = arg.charCodeAt(j);
                     }
-                    javaArgsData.setInt32(i * 4, javaArg, true);
+                    javaArgsData[i] = javaArg;
                 }
 
                 controller.resolve = resolve;
                 controller.reject = reject;
-                wrapExport(teavm.instance.exports.start, teavm.instance)(javaArgs);
+                try {
+                    wrapExport(teavm.instance.exports.start, teavm.instance)(javaArgs);
+                } catch (e) {
+                    reject(e);
+                    return;
+                }
                 process(controller);
             });
         }
     }
 
-    return { JavaError, load, create };
+    return { JavaError, load };
 }();

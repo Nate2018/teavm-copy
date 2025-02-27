@@ -1,8 +1,16 @@
 # output dir
-target
+build
 /build-dir
 /build-cache
 /deploy-with-env.sh
+/release-with-env.sh
+.gradle
+/relocated
+/samples/.gradle
+local.properties
+teavm-local.properties
+.kotlin
+node_modules
 
 # KDE
 .directory
@@ -26,6 +34,4 @@ target
 !.idea/inspectionProfies
 !.idea/codeStyles
 !.idea/copyright
-!.idea/checkstyle-idea.xml
 
-dependency-reduced-pom.xml

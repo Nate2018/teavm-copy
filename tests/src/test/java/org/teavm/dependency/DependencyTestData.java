@@ -15,6 +15,9 @@
  */
 package org.teavm.dependency;
 
+import java.util.AbstractList;
+import java.util.ArrayList;
+
 public class DependencyTestData {
     private DependencyTestData() {
     }
@@ -46,7 +49,7 @@ public class DependencyTestData {
     }
 
     public static void arrays() {
-        Object[] array = { new String("123"), new Integer(123), String.class };
+        Object[] array = { new String("123"), 123, String.class };
         MetaAssertions.assertTypes(array[0], String.class, Integer.class, Class.class);
     }
 
@@ -111,6 +114,14 @@ public class DependencyTestData {
                 throw new IllegalArgumentException();
             default:
                 return new Exception();
+        }
+    }
+
+    public static void reflectionConstructor() throws Exception {
+        var classes = new Class<?>[] { AbstractList.class, ArrayList.class };
+        for (var cls : classes) {
+            var instance = cls.getConstructor().newInstance();
+            MetaAssertions.assertTypes(instance, ArrayList.class);
         }
     }
 
